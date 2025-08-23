@@ -1,0 +1,110 @@
+# 🔒 민감한 정보 - 절대 커밋하면 안됨
+.env
+*.env
+.env.*
+!.env.example
+
+# 🐍 Python 관련
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 📦 패키지 매니저
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# 🌐 가상환경
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+blindinsight-env/
+*-env/
+
+# 📊 Jupyter Notebook
+.ipynb_checkpoints
+
+# 🔧 IDE 관련
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 📝 로그 파일
+*.log
+logs/
+log/
+
+# 💾 데이터베이스
+*.db
+*.sqlite
+*.sqlite3
+
+# 📁 OS 관련
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 🔧 프로젝트 특정
+data/
+models/
+checkpoints/
+outputs/
+temp/
+tmp/
+
+# 🤖 AI/ML 관련
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.onnx
+
+# ☁️ Claude Code 관련
+.claude/
+
+# 📦 uv 관련 (Python 패키지 매니저)
+uv.lock
+.uv/
