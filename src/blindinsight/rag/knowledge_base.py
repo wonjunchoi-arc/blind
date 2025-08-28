@@ -16,6 +16,7 @@ import logging
 
 from .embeddings import EmbeddingManager, VectorStore, DocumentEmbedding
 from .document_processor import DocumentProcessor, ChunkMetadata
+from .json_processor import ReviewDataProcessor, ReviewDataLoader
 from .retriever import RAGRetriever, SearchResult
 from ..models.base import settings
 from ..models.company import BlindPost, CompanyReview, SalaryInfo
@@ -223,6 +224,7 @@ class KnowledgeBase:
         self.embedding_manager = EmbeddingManager()
         self.vector_store = VectorStore()
         self.document_processor = DocumentProcessor()
+        self.review_processor = ReviewDataProcessor()
         self.retriever = RAGRetriever(self.vector_store)
         self.query_engine = QueryEngine(self.retriever)
         
@@ -420,6 +422,145 @@ class KnowledgeBase:
             
         except Exception as e:
             logger.error(f"검색 중 오류 발생: {str(e)}")
+            return []
+    
+    async def load_review_data(
+        self, 
+        reviews_dir: str = "tools/data/reviews",
+        company_filter: Optional[List[str]] = None
+    ) -> bool:
+        """
+        JSON 리뷰 데이터를 지식 베이스에 로드
+        
+        Args:
+            reviews_dir: 리뷰 JSON 파일들이 있는 디렉토리
+            company_filter: 로드할 회사 리스트 (None이면 모든 회사)
+            
+        Returns:
+            성공 여부
+        """
+        try:
+            logger.info(f"JSON 리뷰 데이터 로드 시작: {reviews_dir}")
+            
+            # ReviewDataLoader를 통해 데이터 로드
+            review_loader = ReviewDataLoader(reviews_dir)
+            success = await review_loader.load_all_reviews(company_filter)
+            
+            if success:
+                # 통계 업데이트
+                stats = review_loader.get_stats()
+                self.performance_stats["documents_processed"] += stats["documents_created"]
+                self.performance_stats["total_chunks"] += stats["documents_created"]
+                
+                # 인덱스에 추가 (간단화된 버전)
+                for company in stats["companies_processed"]:
+                    doc_id = f"reviews_{company}_{datetime.now().strftime('%Y%m%d')}"
+                    self.document_index[doc_id] = DocumentIndex(
+                        document_id=doc_id,
+                        source_type="json_reviews",
+                        company_name=company,
+                        category="reviews",
+                        file_path=f"{reviews_dir}/{company}_rag_optimized.json",
+                        processed_at=datetime.now(),
+                        chunk_count=stats["documents_created"] // len(stats["companies_processed"]),
+                        embedding_model="text-embedding-3-small",
+                        metadata={"loader_stats": stats}
+                    )
+                
+                # 인덱스 저장
+                self._save_index()
+                
+                logger.info(f"리뷰 데이터 로드 완료: {stats}")
+                return True
+            else:
+                logger.error("리뷰 데이터 로드 실패")
+                return False
+                
+        except Exception as e:
+            logger.error(f"리뷰 데이터 로드 중 오류: {str(e)}")
+            return False
+    
+    async def search_reviews(
+        self,
+        query: str,
+        company_name: Optional[str] = None,
+        review_aspects: Optional[List[str]] = None,
+        k: int = 10
+    ) -> List[SearchResult]:
+        """
+        리뷰 데이터 전용 검색
+        
+        Args:
+            query: 검색 쿼리
+            company_name: 특정 회사로 필터링
+            review_aspects: 검색할 리뷰 측면 (culture, salary, growth 등)
+            k: 반환할 결과 수
+            
+        Returns:
+            검색 결과 리스트
+        """
+        try:
+            # 검색 필터 구성
+            filters = {}
+            if company_name:
+                filters["company"] = company_name
+            
+            # 리뷰 측면에 따른 컬렉션 선택
+            collections_to_search = []
+            if review_aspects:
+                collection_mapping = {
+                    "culture": "culture_reviews",
+                    "salary": "salary_discussions",
+                    "benefits": "salary_discussions", 
+                    "growth": "career_advice",
+                    "career": "career_advice",
+                    "interview": "interview_reviews",
+                    "management": "culture_reviews"
+                }
+                for aspect in review_aspects:
+                    if aspect in collection_mapping:
+                        collections_to_search.append(collection_mapping[aspect])
+            else:
+                collections_to_search = [
+                    "culture_reviews", 
+                    "salary_discussions", 
+                    "career_advice", 
+                    "company_general"
+                ]
+            
+            # 각 컬렉션에서 검색 수행
+            all_results = []
+            for collection in collections_to_search:
+                try:
+                    results = await self.retriever.search(
+                        query=query,
+                        collection_name=collection,
+                        k=k // len(collections_to_search) + 2,  # 컬렉션당 결과 수 조정
+                        filters=filters,
+                        search_type="hybrid"
+                    )
+                    all_results.extend(results)
+                except Exception as e:
+                    logger.warning(f"컬렉션 {collection} 검색 실패: {str(e)}")
+                    continue
+            
+            # 중복 제거 및 상위 k개 반환
+            unique_results = []
+            seen_contents = set()
+            
+            for result in sorted(all_results, key=lambda x: x.relevance_score, reverse=True):
+                content_hash = hash(result.document.page_content[:100])  # 내용의 처음 100자로 중복 체크
+                if content_hash not in seen_contents:
+                    seen_contents.add(content_hash)
+                    unique_results.append(result)
+                    
+                    if len(unique_results) >= k:
+                        break
+            
+            return unique_results
+            
+        except Exception as e:
+            logger.error(f"리뷰 검색 중 오류: {str(e)}")
             return []
     
     async def get_company_analysis(

@@ -138,11 +138,6 @@ class BlindInsightWorkflow:
         """
         🔗 워크플로우 엣지(연결) 정의 - 노드 간 실행 순서 결정
         
-        💡 엣지(Edge)의 개념:
-        - workflow.add_edge(A, B): A 노드 완료 후 B 노드 실행
-        - END: 워크플로우 종료 지점
-        - 엣지 순서를 바꾸면 실행 흐름이 변경됨
-        
         🔧 커스터마이징 가이드:
         1. 새 노드 삽입: 기존 엣지 제거 후 새 엣지 추가
            예: A -> C 사이에 B 삽입
@@ -224,15 +219,9 @@ class BlindInsightWorkflow:
         thread_id: Optional[str] = None
     ) -> WorkflowState:
         """
-        Execute comprehensive company analysis workflow.
-        
-        Args:
-            request: Analysis request with company and position details
-            user_profile: Optional user profile for personalized analysis
-            thread_id: Optional thread ID for workflow checkpointing
-            
-        Returns:
-            Final workflow state with comprehensive analysis results
+        기업 분석 워크플로우 실행하기
+        - 사용자 요청을 받아서 전체 분석 과정을 진행
+        - 최종 분석 결과를 담은 상태 객체 반환
         """
         
         # Generate unique workflow ID and thread ID
@@ -294,10 +283,9 @@ class BlindInsightWorkflow:
 
 class AnalysisWorkflow:
     """
-    Simplified workflow interface for direct analysis execution.
-    
-    This class provides a simpler interface for executing analysis workflows
-    without dealing with LangGraph complexities directly.
+    분석 워크플로우 간편 인터페이스
+    - BlindInsightWorkflow를 더 쉽게 사용할 수 있도록 래핑
+    - 복잡한 LangGraph 설정을 숨기고 단순한 인터페이스 제공
     """
     
     def __init__(self, config: Optional[WorkflowConfig] = None):
@@ -311,16 +299,9 @@ class AnalysisWorkflow:
         analysis_type: str = "comprehensive"
     ) -> Dict:
         """
-        Execute company analysis with simplified parameters.
-        
-        Args:
-            company: Company name to analyze
-            position: Optional position/role
-            user_profile: Optional user profile for personalization
-            analysis_type: Type of analysis to perform
-            
-        Returns:
-            Dictionary with analysis results
+        기업 분석 실행하기 (간편 버전)
+        - 단순한 파라미터로 분석 실행
+        - 결과를 딕셔너리 형태로 반환
         """
         
         # Create analysis request
@@ -355,15 +336,8 @@ def create_analysis_workflow(
     debug_mode: bool = False
 ) -> BlindInsightWorkflow:
     """
-    Factory function to create a configured BlindInsight workflow.
-    
-    Args:
-        enable_parallel: Enable parallel execution of analysis agents
-        enable_caching: Enable result caching
-        debug_mode: Enable debug logging
-        
-    Returns:
-        Configured BlindInsightWorkflow instance
+   설정이 적용된 분석 워크플로우 생성하기
+    - 사용자가 원하는 옵션으로 워크플로우 구성
     """
     
     config = WorkflowConfig(
@@ -376,7 +350,7 @@ def create_analysis_workflow(
 
 
 def create_simple_workflow() -> AnalysisWorkflow:
-    """Create a simple analysis workflow with default configuration."""
+    """기본 설정으로 간편 워크플로우 생성하기"""
     return AnalysisWorkflow()
 
 
@@ -386,14 +360,9 @@ async def execute_quick_analysis(
     position: Optional[str] = None
 ) -> Dict:
     """
-    Execute a quick company analysis with minimal configuration.
-    
-    Args:
-        company: Company name to analyze
-        position: Optional position/role
-        
-    Returns:
-        Analysis results dictionary
+   빠른 기업 분석 실행하기
+    - 최소한의 설정으로 즉시 분석 시작
+    - 회사명만 입력하면 바로 실행 가능
     """
     
     workflow = create_simple_workflow()
@@ -410,15 +379,9 @@ async def execute_personalized_analysis(
     user_profile: UserProfile
 ) -> Dict:
     """
-    Execute personalized company analysis with user profile.
-    
-    Args:
-        company: Company name to analyze
-        position: Position/role
-        user_profile: User profile for personalization
-        
-    Returns:
-        Personalized analysis results dictionary
+    개인화된 기업 분석 실행하기
+    - 사용자 프로필을 활용한 맞춤형 분석
+    - 개인의 특성에 맞는 분석 결과 제공
     """
     
     workflow = create_simple_workflow()

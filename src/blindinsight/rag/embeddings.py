@@ -5,12 +5,21 @@ OpenAI 임베딩을 사용하여 텍스트를 벡터로 변환하고
 ChromaDB를 통해 효율적인 벡터 검색을 제공합니다.
 """
 
+#embeddings.py
+
 import os
 import json
 import hashlib
+import logging
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
+import functools
+
+# HTTP 요청 로그 레벨 조정
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 import numpy as np
 import chromadb
@@ -42,20 +51,32 @@ class EmbeddingManager:
     한국어 텍스트를 고품질 벡터로 변환합니다.
     """
     
-    def __init__(self, model_name: str = "text-embedding-3-large"):
+    def __init__(self, model_name: str = "text-embedding-3-small"):
         """
         임베딩 관리자 초기화
         
         Args:
             model_name: 사용할 OpenAI 임베딩 모델명
         """
+        # 모델별 차원 설정
+        model_dimensions = {
+            "text-embedding-3-small": 1536,
+            "text-embedding-3-large": 3072,
+            "text-embedding-ada-002": 1536
+        }
+        
+        dimensions = model_dimensions.get(model_name, 1536)
+        
         # OpenAI 임베딩 모델 초기화
         self.embedding_model = OpenAIEmbeddings(
             model=model_name,
             openai_api_key=settings.openai_api_key,
-            dimensions=settings.embedding_dimensions,  # 3072 차원
+            dimensions=dimensions,
             show_progress_bar=True
         )
+        
+        self.model_name = model_name
+        self.dimensions = dimensions
         
         # 임베딩 캐시 (메모리 효율성을 위해)
         self._embedding_cache: Dict[str, List[float]] = {}
@@ -74,7 +95,7 @@ class EmbeddingManager:
         """
         # 빈 텍스트 처리
         if not text or not text.strip():
-            return [0.0] * settings.embedding_dimensions
+            return [0.0] * self.dimensions
         
         # 텍스트 정규화 (공백 제거, 소문자 변환)
         normalized_text = text.strip()
@@ -101,7 +122,7 @@ class EmbeddingManager:
         except Exception as e:
             print(f"임베딩 생성 실패: {str(e)}")
             # 기본값 반환 (영벡터)
-            return [0.0] * settings.embedding_dimensions
+            return [0.0] * self.dimensions
     
     async def create_batch_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
@@ -192,14 +213,17 @@ class VectorStore:
         """
         self.persist_directory = persist_directory or settings.vector_db_path
         
-        # ChromaDB 클라이언트 초기화
+        # ChromaDB 클라이언트 초기화 (성능 최적화)
         self.chroma_client = chromadb.PersistentClient(
             path=self.persist_directory,
             settings=Settings(
                 anonymized_telemetry=False,  # 텔레메트리 비활성화
-                is_persistent=True           # 영구 저장 활성화
+                is_persistent=True,          # 영구 저장 활성화
+                allow_reset=True             # 리셋 허용
             )
         )
+        
+        print(f"ChromaDB 클라이언트 초기화 완료: {self.persist_directory}")
         
         # 임베딩 함수 설정
         self.embedding_manager = EmbeddingManager()
@@ -255,6 +279,7 @@ class VectorStore:
             return True
         
         try:
+
             collection = self._collections[collection_name]
             
             # 임베딩이 없는 문서들의 임베딩 생성
@@ -274,20 +299,86 @@ class VectorStore:
                 for doc, embedding in zip(docs_needing_embedding, embeddings):
                     doc.embedding = embedding
             
-            # ChromaDB에 문서들 추가
-            ids = [doc.document_id for doc in documents]
-            embeddings = [doc.embedding for doc in documents]
-            metadatas = [doc.metadata for doc in documents]
-            documents_text = [doc.content for doc in documents]
+            # ChromaDB에 문서들 추가 (배치 처리)
+            print(f"ChromaDB에 {len(documents)}개 문서 추가 중...")
             
-            collection.add(
-                ids=ids,
-                embeddings=embeddings,
-                metadatas=metadatas,
-                documents=documents_text
-            )
+            batch_size = 50  # 배치 크기 설정
+            total_docs = len(documents)
             
-            print(f"{len(documents)}개 문서를 '{collection_name}' 컬렉션에 추가 완료")
+            for i in range(0, total_docs, batch_size):
+                batch_end = min(i + batch_size, total_docs)
+                batch_docs = documents[i:batch_end]
+                
+                print(f"  배치 {i//batch_size + 1}: {len(batch_docs)}개 문서 처리 중... ({i+1}-{batch_end}/{total_docs})")
+                
+                # 배치별 데이터 준비
+                ids = [doc.document_id for doc in batch_docs]
+                embeddings = [doc.embedding for doc in batch_docs]
+                metadatas = [doc.metadata for doc in batch_docs]
+                documents_text = [doc.content for doc in batch_docs]
+                
+                # ChromaDB에 배치 추가 (디버깅 정보 추가)
+                try:
+                    # 데이터 검증
+                    print(f"    디버그: 첫 번째 ID = {ids[0] if ids else 'None'}")
+                    print(f"    디버그: 임베딩 차원 = {len(embeddings[0]) if embeddings and embeddings[0] else 'None'}")
+                    print(f"    디버그: 첫 번째 메타데이터 키 = {list(metadatas[0].keys()) if metadatas else 'None'}")
+                    
+                    # 메타데이터 타입 검증
+                    for i, metadata in enumerate(metadatas):
+                        for key, value in metadata.items():
+                            if not isinstance(value, (str, int, float, bool, type(None))):
+                                print(f"    오류: 메타데이터[{i}]['{key}'] = {type(value)} (값: {value})")
+                                raise ValueError(f"잘못된 메타데이터 타입: {key} = {type(value)}")
+                    
+                    print(f"    ChromaDB collection.add() 호출 중...")
+                    
+                    # 개별 문서 단위로 추가 (문제 해결 시도)
+                    for j, (doc_id, embedding, metadata, text) in enumerate(zip(ids, embeddings, metadatas, documents_text)):
+                        try:
+                            print(f"      문서 {j+1}/{len(ids)} 추가: {doc_id[:30]}...")
+                            
+                            # 기존 문서 확인 및 삭제 (중복 방지)
+                            try:
+                                existing = collection.get(ids=[doc_id])
+                                if existing['ids']:
+                                    print(f"      기존 문서 삭제: {doc_id[:30]}...")
+                                    collection.delete(ids=[doc_id])
+                            except:
+                                pass  # 문서가 존재하지 않으면 무시
+                            
+                            # 새 문서 추가
+                            # 실행할 함수(collection.add)와 그 인자(ids, embeddings 등)를 분리해서 전달합니다.
+                            # 수정 코드
+                            collection.add(
+                            ids=[doc_id],
+                            embeddings=[embedding],
+                            metadatas=[metadata],
+                            documents=[text]
+                           )
+                            print(f"      문서 {j+1} 완료")
+                            
+                            # 개별 문서 간 작은 지연
+                            await asyncio.sleep(0.01)
+                            
+                        except Exception as single_add_error:
+                            print(f"      문서 {j+1} 추가 실패: {str(single_add_error)}")
+                            # 개별 문서 실패해도 계속 진행
+                            continue
+                    
+                    print(f"    ChromaDB collection.add() 완료!")
+                except Exception as add_error:
+                    print(f"    ChromaDB add 오류: {str(add_error)}")
+                    print(f"    오류 타입: {type(add_error)}")
+                    raise add_error
+                
+                print(f"  배치 {i//batch_size + 1} 완료 ({len(batch_docs)}개 문서)")
+                
+                # 배치 간 짧은 지연 (메모리 정리 시간)
+                if batch_end < total_docs:  # 마지막 배치가 아닌 경우에만
+                    await asyncio.sleep(0.1)
+            
+            print(f"✅ {total_docs}개 문서를 '{collection_name}' 컬렉션에 추가 완료")
             return True
             
         except Exception as e:
