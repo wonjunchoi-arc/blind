@@ -357,38 +357,39 @@ class BlindDataHandler(BaseDataHandler):
     async def _process_blind_post(self, raw_data: Dict) -> Optional[BlindPost]:
         """Blind 포스트 데이터 처리"""
         
-        # 필수 필드 검증
-        required_fields = ["company_name", "title", "content"]
-        if not self._validate_required_fields(raw_data, required_fields):
-            return None
+        # 필수 필드 검증 - 더 관대한 검증으로 변경
+        if not (raw_data.get("company_name") or raw_data.get("company")):
+            logger.warning("BlindPost: company 정보 없음, 기본값 사용")
+        if not raw_data.get("title"):
+            logger.warning("BlindPost: title 없음, 기본값 사용")
+        if not raw_data.get("content"):
+            logger.warning("BlindPost: content 없음, 기본값 사용")
         
         try:
-            # BlindPost 객체 생성
+            # BlindPost 객체 생성 - 필드명을 모델 정의에 맞게 수정
             blind_post = BlindPost(
-                id=raw_data.get("id", f"blind_{hash(str(raw_data))}"),
-                company_name=self.transformer.normalize_company_name(
-                    raw_data["company_name"]
+                post_id=raw_data.get("id", f"blind_{hash(str(raw_data))}"),
+                company=self.transformer.normalize_company_name(
+                    raw_data.get("company_name", raw_data.get("company", "알 수 없는 회사"))
                 ),
-                title=self._clean_and_validate_text(raw_data["title"], 200),
-                content=self._clean_and_validate_text(raw_data["content"]),
-                category=raw_data.get("category", "일반"),
-                author_info={
-                    "anonymous_id": raw_data.get("anonymous_id", "unknown"),
-                    "department": raw_data.get("department"),
-                    "position": raw_data.get("position"),
-                    "work_years": raw_data.get("work_years")
-                },
-                engagement_metrics={
-                    "views": raw_data.get("views", 0),
-                    "likes": raw_data.get("likes", 0),
-                    "comments": raw_data.get("comments", 0)
-                },
-                tags=self.transformer.extract_keywords(raw_data["content"]),
+                title=self._clean_and_validate_text(
+                    raw_data.get("title", "제목 없음"), 200
+                ),
+                content=self._clean_and_validate_text(
+                    raw_data.get("content", "내용 없음")
+                ),
+                category=raw_data.get("category", "general"),
+                tags=self.transformer.extract_keywords(raw_data.get("content", "")),
+                department=raw_data.get("department"),
+                position=raw_data.get("position"),
+                experience_years=raw_data.get("work_years", raw_data.get("experience_years")),
+                likes=raw_data.get("likes", 0),
+                comments=raw_data.get("comments", 0),
+                views=raw_data.get("views", 0),
                 sentiment_score=self.transformer.calculate_sentiment_score(
-                    raw_data["content"]
+                    raw_data.get("content", "")
                 ),
-                created_at=raw_data.get("created_at", datetime.now()),
-                processed_at=datetime.now()
+                created_at=raw_data.get("created_at", datetime.now())
             )
             
             return blind_post
@@ -400,40 +401,36 @@ class BlindDataHandler(BaseDataHandler):
     async def _process_company_review(self, raw_data: Dict) -> Optional[CompanyReview]:
         """회사 리뷰 데이터 처리"""
         
-        required_fields = ["company_name", "title", "content"]
-        if not self._validate_required_fields(raw_data, required_fields):
-            return None
+        # 필수 필드 검증 - 더 관대한 검증으로 변경
+        if not (raw_data.get("company_name") or raw_data.get("company")):
+            logger.warning("CompanyReview: company 정보 없음, 기본값 사용")
         
         try:
+            # CompanyReview 객체 생성 - 필드명을 모델 정의에 맞게 수정
             company_review = CompanyReview(
-                id=raw_data.get("id", f"review_{hash(str(raw_data))}"),
-                company_name=self.transformer.normalize_company_name(
-                    raw_data["company_name"]
+                review_id=raw_data.get("id", f"review_{hash(str(raw_data))}"),
+                company=self.transformer.normalize_company_name(
+                    raw_data.get("company_name", raw_data.get("company", "알 수 없는 회사"))
                 ),
-                title=self._clean_and_validate_text(raw_data["title"], 200),
-                content=self._clean_and_validate_text(raw_data["content"]),
-                rating=float(raw_data.get("rating", 3.0)),
-                pros=raw_data.get("pros", []),
-                cons=raw_data.get("cons", []),
-                reviewer_info={
+                overall_rating=float(raw_data.get("rating", 3.0)),
+                work_life_balance=int(raw_data.get("work_life_balance", 3)),
+                culture_values=int(raw_data.get("culture_values", 3)),
+                career_opportunities=int(raw_data.get("career_opportunities", 3)),
+                compensation_benefits=int(raw_data.get("compensation_benefits", 3)),
+                senior_management=int(raw_data.get("senior_management", 3)),
+                pros=raw_data.get("pros", raw_data.get("title", "장점 정보 없음")),
+                cons=raw_data.get("cons", raw_data.get("content", "단점 정보 없음")),
+                management_review=raw_data.get("management_review"),
+                reviewer_profile={
                     "department": raw_data.get("department"),
                     "position": raw_data.get("position"),
-                    "employment_status": raw_data.get("employment_status"),
                     "work_years": raw_data.get("work_years"),
                     "anonymous_id": raw_data.get("anonymous_id", "unknown")
                 },
-                categories={
-                    "culture": self.transformer.calculate_sentiment_score(
-                        raw_data.get("content", "")
-                    ),
-                    "compensation": 0.0,  # 별도 분석 필요
-                    "work_life_balance": 0.0,  # 별도 분석 필요
-                    "management": 0.0,  # 별도 분석 필요
-                    "career_growth": 0.0  # 별도 분석 필요
-                },
-                tags=self.transformer.extract_keywords(raw_data["content"]),
-                created_at=raw_data.get("created_at", datetime.now()),
-                processed_at=datetime.now()
+                employment_status=raw_data.get("employment_status", "current"),
+                position_category=raw_data.get("position_category"),
+                tenure_months=raw_data.get("tenure_months"),
+                created_at=raw_data.get("created_at", datetime.now())
             )
             
             return company_review
@@ -445,51 +442,44 @@ class BlindDataHandler(BaseDataHandler):
     async def _process_salary_info(self, raw_data: Dict) -> Optional[SalaryInfo]:
         """연봉 정보 데이터 처리"""
         
-        required_fields = ["company_name", "position"]
-        if not self._validate_required_fields(raw_data, required_fields):
-            return None
+        # 필수 필드 검증 - 더 관대한 검증으로 변경
+        if not (raw_data.get("company_name") or raw_data.get("company")):
+            logger.warning("SalaryInfo: company 정보 없음, 기본값 사용")
+        if not raw_data.get("position"):
+            logger.warning("SalaryInfo: position 정보 없음, 기본값 사용")
         
         try:
             # 연봉 정보 파싱
-            total_compensation = raw_data.get("total_compensation")
-            if isinstance(total_compensation, str):
-                total_compensation = self.transformer.parse_salary_amount(total_compensation)
+            total_compensation_value = raw_data.get("total_compensation")
+            if isinstance(total_compensation_value, str):
+                total_compensation_value = self.transformer.parse_salary_amount(total_compensation_value)
             
-            base_salary = raw_data.get("base_salary")
-            if isinstance(base_salary, str):
-                base_salary = self.transformer.parse_salary_amount(base_salary)
+            base_salary_value = raw_data.get("base_salary")
+            if isinstance(base_salary_value, str):
+                base_salary_value = self.transformer.parse_salary_amount(base_salary_value)
             
+            # SalaryInfo 객체 생성 - 필드명을 모델 정의에 맞게 수정
             salary_info = SalaryInfo(
-                id=raw_data.get("id", f"salary_{hash(str(raw_data))}"),
-                company_name=self.transformer.normalize_company_name(
-                    raw_data["company_name"]
+                salary_id=raw_data.get("id", f"salary_{hash(str(raw_data))}"),
+                company=self.transformer.normalize_company_name(
+                    raw_data.get("company_name", raw_data.get("company", "알 수 없는 회사"))
                 ),
-                position=raw_data["position"],
+                position=raw_data.get("position", "일반 직무"),
+                level=raw_data.get("level"),
                 department=raw_data.get("department"),
-                compensation_details={
-                    "base_salary": base_salary or 0,
-                    "bonus": raw_data.get("bonus", 0),
-                    "stock_options": raw_data.get("stock_options", 0),
-                    "benefits_value": raw_data.get("benefits_value", 0),
-                    "total_compensation": total_compensation or 0
-                },
-                experience_info={
-                    "years": raw_data.get("experience_years", 0),
-                    "level": raw_data.get("level"),
-                    "education": raw_data.get("education"),
-                    "skills": raw_data.get("skills_required", [])
-                },
+                base_salary=max(int(base_salary_value or 0) // 10000, 0),  # 만원 단위로 변환, 최소 0
+                total_compensation=max(int(total_compensation_value or 0) // 10000, 0),  # 만원 단위로 변환, 최소 0
+                bonus=raw_data.get("bonus"),
+                stock_options=raw_data.get("stock_options"),
+                overtime_pay=raw_data.get("overtime_pay"),
+                other_benefits=raw_data.get("benefits", []),
+                experience_years=max(raw_data.get("experience_years", 0), 0),
+                education_level=raw_data.get("education"),
                 location=raw_data.get("location", "서울"),
-                employment_type=raw_data.get("employment_type", "정규직"),
-                reported_date=raw_data.get("created_at", datetime.now()),
-                verification_status="unverified",  # 기본값
-                tags=["연봉정보", raw_data.get("position", "")],
-                metadata={
-                    "source": "blind",
-                    "anonymous_id": raw_data.get("anonymous_id"),
-                    "sample_size": raw_data.get("sample_size", 1)
-                },
-                processed_at=datetime.now()
+                salary_date=raw_data.get("created_at", datetime.now()),
+                reported_at=datetime.now(),
+                verified=False,
+                currency="KRW"
             )
             
             return salary_info
