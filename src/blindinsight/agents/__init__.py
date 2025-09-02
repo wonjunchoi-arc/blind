@@ -3,10 +3,11 @@ AI agents for BlindInsight analysis system.
 """
 
 from .base import *
-from .culture_agent import *
-from .compensation_agent import *
-from .growth_agent import *
-from .career_agent import *
+from .career_growth_agent import *
+from .company_culture_agent import *
+from .management_agent import *
+from .salary_benefits_agent import *
+from .work_life_balance_agent import *
 
 __all__ = [
     # Base agent
@@ -15,10 +16,11 @@ __all__ = [
     "AgentConfig",
     
     # Specialized agents
-    "CultureAnalysisAgent",
-    "CompensationAnalysisAgent", 
-    "GrowthStabilityAgent",
-    "CareerPathAgent",
+    "CompanyCultureAgent",
+    "WorkLifeBalanceAgent",
+    "ManagementAgent",
+    "SalaryBenefitsAgent",
+    "CareerGrowthAgent",
     
     # Agent utilities
     "AgentOrchestrator",

@@ -19,42 +19,6 @@ from datetime import datetime
 import os
 
 # =============================================================================
-# 회사별 크롤링 대상 설정
-# =============================================================================
-
-COMPANIES = {
-    # 회사별 설정 예시 (실제 사용 시 ### 부분을 회사 코드로 변경)
-    "naver": {
-        "name": "네이버",
-        "company_code": "NAVER",  # 실제 블라인드 회사 코드로 변경
-        "url": "https://www.teamblind.com/kr/company/NAVER/reviews",
-        "max_pages": 50,
-        "output_file": f"blind_review_naver_{datetime.now().strftime('%Y%m%d')}.xlsx"
-    },
-    "kakao": {
-        "name": "카카오",
-        "company_code": "KAKAO",  # 실제 블라인드 회사 코드로 변경
-        "url": "https://www.teamblind.com/kr/company/KAKAO/reviews", 
-        "max_pages": 30,
-        "output_file": f"blind_review_kakao_{datetime.now().strftime('%Y%m%d')}.xlsx"
-    },
-    "samsung": {
-        "name": "삼성전자",
-        "company_code": "SAMSUNG",  # 실제 블라인드 회사 코드로 변경
-        "url": "https://www.teamblind.com/kr/company/삼성전자/reviews",
-        "max_pages": 50,
-        "output_file": f"blind_review_samsung_{datetime.now().strftime('%Y%m%d')}.xlsx"
-    },
-    "lg": {
-        "name": "LG전자",
-        "company_code": "LG",
-        "url": "https://www.teamblind.com/kr/company/LG/reviews",
-        "max_pages": 40,
-        "output_file": f"blind_review_lg_{datetime.now().strftime('%Y%m%d')}.xlsx"
-    }
-    # 필요에 따라 더 많은 회사 추가 가능
-}
-# =============================================================================
 # RAG 최적화 설정 (새로 추가)
 # =============================================================================
 

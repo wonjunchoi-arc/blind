@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-리뷰 데이터 마이그레이션 스크립트
+청크 데이터 마이그레이션 스크립트
 
-tools/data/reviews의 JSON 파일들을 ChromaDB 벡터 데이터베이스로 마이그레이션합니다.
+tools/data의 chunk_first_vectordb JSON 파일들을 ChromaDB 벡터 데이터베이스로 마이그레이션합니다.
 OpenAI text-embedding-3-small 모델을 사용하여 임베딩을 생성합니다.
 """
 #migrate_reviews.py
@@ -17,7 +17,7 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root / "src"))
 
-from blindinsight.rag.json_processor import ReviewDataLoader
+from blindinsight.rag.json_processor import ChunkDataLoader
 from blindinsight.models.base import settings
 
 
@@ -33,7 +33,7 @@ async def main():
         return False
     
     # 데이터 디렉토리 확인
-    data_dir = project_root / "tools" / "data" / "reviews"
+    data_dir = project_root / "data" / "hybrid_vectordb"
     if not data_dir.exists():
         print(f"[오류] 데이터 디렉토리를 찾을 수 없습니다: {data_dir}")
         return False
@@ -43,12 +43,12 @@ async def main():
     print(f"[저장] 벡터 DB: {settings.vector_db_path}")
     print()
     
-    # ReviewDataLoader 초기화
+    # ChunkDataLoader 초기화
     try:
-        loader = ReviewDataLoader(str(data_dir))
-        print("[성공] ReviewDataLoader 초기화 완료")
+        loader = ChunkDataLoader(str(data_dir))
+        print("[성공] ChunkDataLoader 초기화 완료")
     except Exception as e:
-        print(f"[오류] ReviewDataLoader 초기화 실패: {e}")
+        print(f"[오류] ChunkDataLoader 초기화 실패: {e}")
         return False
     
     # 사용자 확인
@@ -61,8 +61,8 @@ async def main():
     start_time = time.time()
     
     try:
-        # 모든 리뷰 데이터 로드 및 벡터화
-        success = await loader.load_all_reviews()
+        # 모든 청크 데이터 로드 및 벡터화
+        success = await loader.load_all_chunks()
         
         end_time = time.time()
         processing_time = end_time - start_time
@@ -119,8 +119,8 @@ async def migrate_single_company(company_name: str):
     """특정 회사만 마이그레이션"""
     print(f"[회사] {company_name} 마이그레이션 시작...")
     
-    data_dir = project_root / "tools" / "data" / "reviews"
-    loader = ReviewDataLoader(str(data_dir))
+    data_dir = project_root / "data"
+    loader = ChunkDataLoader(str(data_dir))
     
     success = await loader.load_single_company(company_name)
     
@@ -142,19 +142,20 @@ def show_help():
   python migrate_reviews.py --help       - 도움말 출력
 
 예시:
-  python migrate_reviews.py 네이버       - 네이버 리뷰만 마이그레이션
-  python migrate_reviews.py 카카오       - 카카오 리뷰만 마이그레이션
+  python migrate_reviews.py 네이버       - 네이버 청크 데이터만 마이그레이션
+  python migrate_reviews.py 카카오       - 카카오 청크 데이터만 마이그레이션
 
 환경 변수:
   OPENAI_API_KEY                         - OpenAI API 키 (필수)
 
 출력:
-  ChromaDB 벡터 데이터베이스에 다음 컬렉션으로 저장:
-  - culture_reviews      - 기업 문화 관련 리뷰
-  - salary_discussions   - 연봉 및 복지 관련 정보
-  - career_advice        - 커리어 및 성장 관련 조언
-  - interview_reviews    - 면접 후기
-  - company_general      - 일반적인 회사 정보
+  ChromaDB 벡터 데이터베이스에 다음 6개 컬렉션으로 저장:
+  - company_culture      - 회사 문화 관련 청크
+  - work_life_balance    - 워라밸 관련 청크
+  - management           - 경영진/관리 관련 청크
+  - salary_benefits      - 연봉/복지 관련 청크
+  - career_growth        - 커리어 성장 관련 청크
+  - general              - 일반적인 정보 청크
     """)
 
 
