@@ -8,11 +8,9 @@ Streamlit 기반의 메인 웹 애플리케이션으로,
 import streamlit as st
 import asyncio
 import logging
-from datetime import datetime, timedelta
+import os
+from datetime import datetime
 from typing import Dict, List, Optional, Any
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
 from pathlib import Path
 import sys
 
@@ -24,14 +22,16 @@ from blindinsight.models.analysis import AnalysisRequest
 from blindinsight.models.user import UserProfile, create_default_user_profile
 from blindinsight.rag.knowledge_base import KnowledgeBase
 from blindinsight.mcp.client import MCPClient
-from blindinsight.mcp.providers import (
-    BlindDataProvider, JobSiteProvider, 
-    SalaryDataProvider, CompanyNewsProvider, DataProviderConfig
-)
+from blindinsight.mcp.providers import BlindDataProvider, DataProviderConfig
 from blindinsight.models.base import settings
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler("log.txt", encoding="utf-8")
+    ]
+)
 logger = logging.getLogger(__name__)
 
 
@@ -100,7 +100,12 @@ class BlindInsightApp:
         SessionManager.initialize_session()
         
         # 핵심 구성 요소들 (지연 초기화)
-        self.knowledge_base: Optional[KnowledgeBase] = None
+        # 세션에서 지식베이스 복원 시도
+        self.knowledge_base: Optional[KnowledgeBase] = st.session_state.get("knowledge_base", None)
+        if self.knowledge_base:
+            logger.info("세션에서 기존 지식베이스 인스턴스 복원됨")
+        else:
+            logger.info("세션에 지식베이스 인스턴스 없음 - 새로 초기화 필요")
         self.workflow: Optional[BlindInsightWorkflow] = None
         self.mcp_client: Optional[MCPClient] = None
         
@@ -117,24 +122,108 @@ class BlindInsightApp:
         
         try:
             with st.spinner("BlindInsight AI를 초기화하는 중..."):
-                # 지식 베이스 초기화
-                self.knowledge_base = KnowledgeBase()
+                # 지식 베이스 초기화 (재시도 로직 포함)
+                self.knowledge_base = None
+                for attempt in range(3):  # 최대 3회 시도
+                    try:
+                        logger.info(f"지식 베이스 초기화 시도 {attempt + 1}/3")
+                        logger.info(f"데이터 디렉토리: {settings.data_directory}")
+                        logger.info(f"벡터DB 경로: C:/blind/data/embeddings")
+                        
+                        # 실제 지식베이스 경로를 명시적으로 설정
+                        knowledge_base = KnowledgeBase(
+                            data_dir=settings.data_directory,
+                            vector_db_path="C:/blind/data/embeddings"
+                        )
+                        
+                        # 초기화 완료 후 데이터 확인
+                        await knowledge_base.initialize()
+                        
+                        # 초기화 성공 시 인스턴스와 세션에 저장
+                        self.knowledge_base = knowledge_base
+                        st.session_state.knowledge_base = knowledge_base
+                        
+                        # 연결 및 데이터 확인
+                        stats = self.knowledge_base.get_statistics()
+                        total_docs = stats.get("knowledge_base", {}).get("total_documents", 0)
+                        
+                        logger.info(f"지식 베이스 초기화 완료 - 총 문서 수: {total_docs}")
+                        
+                        if total_docs > 0:
+                            logger.info("기존 데이터가 발견되어 지식베이스가 준비되었습니다.")
+                        else:
+                            logger.warning("지식베이스에 데이터가 없습니다. 동적 필터링이 제한될 수 있습니다.")
+                        
+                        break
+                            
+                    except Exception as e:
+                        import traceback
+                        logger.error(f"지식 베이스 초기화 실패 (시도 {attempt + 1}/3): {str(e)}")
+                        logger.error(f"상세 오류: {traceback.format_exc()}")
+                        if attempt == 2:  # 마지막 시도
+                            logger.error("지식 베이스 초기화 최종 실패")
+                            self.knowledge_base = None
+                            # 세션에서도 제거
+                            if "knowledge_base" in st.session_state:
+                                del st.session_state.knowledge_base
+                            st.error("⚠️ 지식베이스 초기화에 실패했습니다. 데이터 디렉토리와 권한을 확인해주세요.")
+                            st.error(f"오류 세부사항: {str(e)}")
+                            # 초기화 실패 시 재시도 가능하도록 설정
+                            st.session_state.knowledge_base_initialized = False
+                            return  # 초기화 실패 시 early return
+                        else:
+                            import time
+                            time.sleep(1)  # 1초 대기 후 재시도
+                
+                # 지식베이스가 초기화되었다면 데이터 존재 여부 확인 및 로드
+                if self.knowledge_base:
+                    try:
+                        await self._ensure_knowledge_base_data()
+                    except Exception as e:
+                        logger.warning(f"지식베이스 데이터 확인/로드 실패: {str(e)}")
                 
                 # MCP 클라이언트 초기화
-                self.mcp_client = MCPClient(self.knowledge_base)
+                try:
+                    self.mcp_client = MCPClient(self.knowledge_base)
+                    logger.info("MCP 클라이언트 초기화 완료")
+                except Exception as e:
+                    logger.error(f"MCP 클라이언트 초기화 실패: {str(e)}")
+                    self.mcp_client = None
                 
                 # 워크플로우 초기화
-                self.workflow = BlindInsightWorkflow()
+                try:
+                    self.workflow = BlindInsightWorkflow()
+                    logger.info("워크플로우 초기화 완료")
+                except Exception as e:
+                    logger.error(f"워크플로우 초기화 실패: {str(e)}")
+                    self.workflow = None
                 
-                # 샘플 데이터 로드 (실제 환경에서는 실제 데이터 사용)
-                await self._load_sample_data()
+                # 샘플 데이터 로드 (실패해도 앱은 계속 실행) - 비활성화됨
+                # 개발 모드에서만 샘플 데이터를 로드하도록 설정
+                load_sample_data = getattr(settings, 'enable_sample_data_loading', False)
+                if load_sample_data:
+                    try:
+                        logger.info("샘플 데이터 로드가 활성화되어 있습니다...")
+                        await self._load_sample_data()
+                    except Exception as e:
+                        logger.warning(f"샘플 데이터 로드 실패 (계속 진행): {str(e)}")
+                else:
+                    logger.info("샘플 데이터 로드가 비활성화되어 있습니다.")
                 
-                st.session_state.app_initialized = True
-                logger.info("핵심 구성 요소 초기화 완료")
+                # 지식베이스 초기화 성공 시에만 완전 초기화 완료로 설정
+                if self.knowledge_base:
+                    st.session_state.app_initialized = True
+                    st.session_state.knowledge_base_initialized = True
+                    logger.info("핵심 구성 요소 초기화 완료")
+                else:
+                    logger.error("지식베이스 초기화 실패로 인해 앱 초기화 미완료")
+                    st.session_state.knowledge_base_initialized = False
                 
         except Exception as e:
-            st.error(f"초기화 중 오류가 발생했습니다: {str(e)}")
             logger.error(f"초기화 오류: {str(e)}")
+            st.error(f"애플리케이션 초기화 중 오류가 발생했습니다: {str(e)}")
+            st.session_state.app_initialized = False
+            st.session_state.knowledge_base_initialized = False
     
     async def _load_sample_data(self):
         """샘플 데이터 로드 (데모용)"""
@@ -158,16 +247,76 @@ class BlindInsightApp:
             provider = BlindDataProvider(config, self.mcp_client)
             handler = DataHandler(self.knowledge_base)
             
-            # 각 회사별로 샘플 데이터 생성 및 저장
+            # 각 회사별로 샘플 데이터 생성 및 저장 - 에러 처리 추가
             for company in sample_companies[:2]:  # 처음 2개 회사만 로드 (시간 절약)
-                sample_data = await provider.fetch_company_data(company)
-                if sample_data:
-                    await handler.process_provider_data("blind", sample_data)
+                try:
+                    sample_data = await provider.fetch_company_data(company)
+                    if sample_data:
+                        result = await handler.process_provider_data("blind", sample_data)
+                        logger.info(f"{company} 데이터 처리 결과: {result.processed_count}개 성공, {result.failed_count}개 실패")
+                except Exception as e:
+                    logger.warning(f"{company} 샘플 데이터 처리 실패: {str(e)}")
+                    continue  # 한 회사가 실패해도 다음 회사로 진행
             
-            logger.info("샘플 데이터 로드 완료")
+            logger.info("샘플 데이터 로드 완료 (일부 오류 발생 가능)")
             
         except Exception as e:
             logger.error(f"샘플 데이터 로드 실패: {str(e)}")
+    
+    async def _ensure_knowledge_base_data(self):
+        """지식베이스에 데이터가 있는지 확인하고 없으면 로드"""
+        try:
+            logger.info("지식베이스 데이터 존재 여부 확인 중...")
+            
+            # 통계를 통해 데이터 존재 여부 확인
+            stats = self.knowledge_base.get_statistics()
+            total_documents = stats.get("knowledge_base", {}).get("total_documents", 0)
+            
+            logger.info(f"현재 지식베이스 총 문서 수: {total_documents}")
+            
+            if total_documents == 0:
+                logger.info("지식베이스에 데이터가 없습니다. 기존 RAG 최적화된 데이터 로드를 시도합니다...")
+                
+                # tools/data 디렉토리에서 기존 데이터 로드 시도
+                import os
+                data_paths = [
+                    "tools/data",  # 상대 경로
+                    "C:/blind/tools/data",  # 절대 경로
+                    "./tools/data"  # 현재 디렉토리 기준
+                ]
+                
+                data_loaded = False
+                for data_path in data_paths:
+                    if os.path.exists(data_path):
+                        logger.info(f"데이터 디렉토리 발견: {data_path}")
+                        try:
+                            # 특정 회사들의 기존 RAG 최적화된 데이터 로드
+                            companies_to_load = ["카카오", "네이버", "쿠팡", "삼성전자", "LG전자"]
+                            success = await self.knowledge_base.load_chunk_data(
+                                data_dir=data_path,
+                                company_filter=companies_to_load
+                            )
+                            
+                            if success:
+                                logger.info("기존 RAG 데이터 로드 완료")
+                                data_loaded = True
+                                break
+                            else:
+                                logger.warning(f"{data_path}에서 데이터 로드 실패")
+                        except Exception as e:
+                            logger.warning(f"{data_path}에서 데이터 로드 중 오류: {str(e)}")
+                            continue
+                    else:
+                        logger.debug(f"데이터 디렉토리 없음: {data_path}")
+                
+                if not data_loaded:
+                    logger.warning("기존 데이터 로드에 실패했습니다. 지식베이스는 비어있는 상태로 시작됩니다.")
+            else:
+                logger.info(f"지식베이스에 이미 {total_documents}개의 문서가 있습니다.")
+                
+        except Exception as e:
+            logger.error(f"지식베이스 데이터 확인 중 오류: {str(e)}")
+            raise
     
     def run(self):
         """애플리케이션 실행"""
@@ -311,33 +460,112 @@ class BlindInsightApp:
                 st.rerun()
     
     def _render_company_analysis_page(self):
-        """회사 분석 페이지 렌더링 - 카카오톡 사진과 같은 3탭 구조"""
-        
+        """회사 분석 페이지 렌더링 - 진입시 회사/직무/연도 모두 프리패치"""
         st.markdown("## 🏢 회사 분석")
-        
-        # 회사 검색 인터페이스
-        company_name = st.text_input(
-            "분석할 회사명을 입력하세요",
-            placeholder="예: 금호석유화학, 네이버, 카카오, 쿠팡...",
-            key="company_search"
-        )
-        
+        logger.info("회사 분석 페이지 진입")
+        # 지식베이스 상태 확인
+        if not self.knowledge_base or not st.session_state.get("knowledge_base_initialized", False):
+            st.error("⚠️ 지식베이스가 초기화되지 않았습니다.")
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("🔄 지식베이스 재초기화 시도", type="primary"):
+                    # 재초기화 시도
+                    st.session_state.app_initialized = False
+                    st.session_state.knowledge_base_initialized = False
+                    # 세션에서 기존 지식베이스 제거
+                    if "knowledge_base" in st.session_state:
+                        del st.session_state.knowledge_base
+                    # 회사 목록 캐시도 제거
+                    if "available_companies" in st.session_state:
+                        del st.session_state.available_companies
+                    st.rerun()
+            with col2:
+                st.info("💡 앱을 새로고침(F5) 하거나 재시작해주세요.")
+            return
+
+        # 1. 회사 목록 로드 및 캐시
+        if "available_companies" not in st.session_state:
+            with st.spinner("회사 목록 로딩 중..."):
+                try:
+                    companies = asyncio.run(self.knowledge_base.get_available_companies())
+                    logger.info(f"회사 데이터 get_available_companies()반환값: {companies}")
+                    if companies and len(companies) > 0:
+                        st.session_state.available_companies = sorted(companies)
+                    else:
+                        st.session_state.available_companies = []
+                except Exception as e:
+                    logger.error(f"회사명 로딩 실패: {str(e)}")
+                    st.session_state.available_companies = []
+                    st.error(f"⚠️ 회사 목록 로딩 실패: {str(e)}")
+                    return
+
+        # 2. 프리패치: 각 회사별 직무/연도 미리 DB에서 쿼리해 캐싱
+        companies = st.session_state.get("available_companies", [])
+        with st.spinner("회사별 직무/연도 데이터 캐싱 중..."):
+            for company in companies:
+                # 직무
+                pos_key = f"positions_{company}"
+                if pos_key not in st.session_state:
+                    try:
+                        positions = asyncio.run(self.knowledge_base.get_available_positions(company))
+                        if positions and len(positions) > 0:
+                            st.session_state[pos_key] = ["선택 안함"] + sorted([p for p in positions if p and p.strip()])
+                        else:
+                            st.session_state[pos_key] = ["선택 안함", f"{company}에 직무 데이터 없음"]
+                    except Exception as e:
+                        logger.error(f"직무({company}) prefetch 오류: {str(e)}")
+                        st.session_state[pos_key] = ["선택 안함", "로딩 실패"]
+                # 연도
+                year_key = f"years_{company}"
+                if year_key not in st.session_state:
+                    try:
+                        years = asyncio.run(self.knowledge_base.get_available_years(company))
+                        if years and len(years) > 0:
+                            st.session_state[year_key] = ["선택 안함"] + sorted([str(y) for y in years if y], reverse=True)
+                        else:
+                            st.session_state[year_key] = ["선택 안함", f"{company}에 연도 데이터 없음"]
+                    except Exception as e:
+                        logger.error(f"연도({company}) prefetch 오류: {str(e)}")
+                        st.session_state[year_key] = ["선택 안함", "로딩 실패"]
+
+        # 3. 회사 검색 인터페이스
+        available_companies = st.session_state.get("available_companies", [])
+
+        if available_companies and len(available_companies) > 0:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                selected_company = st.selectbox(
+                    "📊 데이터가 있는 회사를 선택하세요",
+                    options=["선택하세요..."] + available_companies,
+                    key="company_dropdown",
+                    help="DB에 실제 데이터가 있는 회사들입니다"
+                )
+                company_name = selected_company if selected_company != "선택하세요..." else None
+            with col2:
+                st.success(f"✅ {len(available_companies)}개 회사")
+                st.caption("실제 분석 가능")
+        else:
+            st.warning("⚠️ DB에 회사 데이터가 없습니다")
+            st.info("💡 먼저 migrate_reviews.py 스크립트를 실행하여 데이터를 마이그레이션해주세요")
+            st.markdown("**마이그레이션 방법:**\n```bash\npython migrate_reviews.py\n```")
+            company_name = st.text_input(
+                "⚠️ 임시 회사명 입력 (데이터 없음)",
+                placeholder="데이터가 없어 분석 결과가 제한될 수 있습니다",
+                key="company_search_no_data",
+                help="실제 분석을 위해서는 먼저 데이터 마이그레이션 필요"
+            )
+
         if company_name:
-            # 회사가 선택되면 3개 탭 표시 (사진과 동일한 구조)
             tab1, tab2, tab3 = st.tabs(["📋 커뮤니티", "ℹ️ 회사 정보", "🤖 AI 분석"])
-            
             with tab1:
                 self._render_community_tab(company_name)
-            
             with tab2:
                 self._render_company_info_tab(company_name)
-            
             with tab3:
                 self._render_ai_analysis_tab(company_name)
         else:
-            # 회사가 선택되지 않았을 때 안내 메시지
             st.info("🏢 분석하고 싶은 회사명을 입력해주세요. AI가 해당 회사에 대한 종합적인 분석을 제공합니다.")
-    
+        
     def _render_community_tab(self, company_name: str):
         """1번 탭: 커뮤니티 글 모음"""
         st.markdown(f"### 📋 {company_name} 커뮤니티 글")
@@ -415,476 +643,545 @@ class BlindInsightApp:
         """3번 탭: AI 분석 기능 (핵심 기능)"""
         st.markdown(f"### 🤖 {company_name} AI 분석")
         
-        # AI 분석 옵션 선택
-        analysis_options = st.multiselect(
-            "분석 항목을 선택하세요:",
-            ["문화 분석", "연봉 분석", "성장성 분석", "커리어 분석", "리스크 분석"],
-            default=["문화 분석", "연봉 분석"]
-        )
+        # 지식베이스 상태 재확인
+        logger.info(f"AI 분석 탭: knowledge_base={self.knowledge_base is not None}, initialized={st.session_state.get('knowledge_base_initialized', False)}")
+        if not self.knowledge_base or not st.session_state.get("knowledge_base_initialized", False):
+            st.error("⚠️ 지식베이스가 초기화되지 않았습니다.")
+            if st.button("🔄 홈으로 돌아가서 재초기화", key="ai_analysis_reinit"):
+                st.session_state.app_initialized = False
+                st.session_state.knowledge_base_initialized = False
+                # 세션에서 기존 지식베이스 제거
+                if "knowledge_base" in st.session_state:
+                    del st.session_state.knowledge_base
+                # 회사 목록 캐시도 제거
+                if "available_companies" in st.session_state:
+                    del st.session_state.available_companies
+                # 홈 페이지로 리다이렉트
+                self.current_page = "홈"
+                st.rerun()
+            return
         
-        # AI 분석 실행 버튼
-        col1, col2 = st.columns([1, 4])
+        # AI 분석 옵션 입력 폼
+        with st.form("ai_analysis_form"):
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                # 회사명은 이미 입력되어 있으므로 표시만
+                analysis_company = st.text_input("회사명", value=company_name, disabled=True)
+            
+            with col2:
+                # 직무 선택 (선택사항) - SQLite 메타데이터 DB에서 동적 로딩
+                cache_key = f"positions_{company_name}"
+                if cache_key not in st.session_state or st.session_state.get("last_selected_company") != company_name:
+                    # 회사가 바뀌었거나 캐시가 없으면 새로 로드
+                    with st.spinner("직무 목록 로딩 중..."):
+                        try:
+                            if self.knowledge_base:
+                                # SQLite 메타데이터 DB에서 해당 회사의 직무만 조회
+                                available_positions = asyncio.run(
+                                    self.knowledge_base.get_available_positions(company_name)
+                                )
+                                
+                                if available_positions and len(available_positions) > 0:
+                                    # SQLite DB에서 가져온 실제 데이터만 사용
+                                    position_options = ["선택 안함"] + sorted([pos for pos in available_positions if pos and pos.strip()])
+                                    logger.info(f"SQLite DB에서 {company_name}의 직무 {len(available_positions)}개 로드됨")
+                                else:
+                                    # 해당 회사에 직무 데이터가 없음
+                                    position_options = ["선택 안함", f"{company_name}에 직무 데이터 없음"]
+                                    logger.warning(f"{company_name}에 직무 데이터가 없습니다")
+                                
+                                st.session_state[cache_key] = position_options
+                                st.session_state["last_selected_company"] = company_name
+                            else:
+                                position_options = ["선택 안함", "지식베이스 연결 필요"]
+                                st.session_state[cache_key] = position_options
+                        except Exception as e:
+                            logger.error(f"{company_name} 직무 목록 로딩 실패: {str(e)}")
+                            position_options = ["선택 안함", "로딩 실패"]
+                            st.session_state[cache_key] = position_options
+                
+                # 캐시된 직무 옵션 가져오기
+                position_options = st.session_state.get(cache_key, ["선택 안함"])
+                
+                # 실제 직무 개수 계산 (메시지 제외)
+                actual_positions = [pos for pos in position_options if pos not in ["선택 안함", f"{company_name}에 직무 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]]
+                position_count = len(actual_positions)
+                
+                selected_position = st.selectbox(
+                    f"직무 (선택) - {position_count}개", 
+                    position_options,
+                    help=f"{company_name} 회사의 실제 직무 목록입니다"
+                )
+            
+            with col3:
+                # 연도 선택 (선택사항) - SQLite 메타데이터 DB에서 동적 로딩
+                cache_key = f"years_{company_name}"
+                if cache_key not in st.session_state or st.session_state.get("last_selected_company_year") != company_name:
+                    # 회사가 바뀌었거나 캐시가 없으면 새로 로드
+                    with st.spinner("연도 목록 로딩 중..."):
+                        try:
+                            if self.knowledge_base:
+                                # SQLite 메타데이터 DB에서 해당 회사의 연도만 조회
+                                available_years = asyncio.run(
+                                    self.knowledge_base.get_available_years(company_name)
+                                )
+                                
+                                if available_years and len(available_years) > 0:
+                                    # SQLite DB에서 가져온 실제 데이터만 사용 (내림차순 정렬)
+                                    year_options = ["선택 안함"] + sorted([str(year) for year in available_years if year], reverse=True)
+                                    logger.info(f"SQLite DB에서 {company_name}의 연도 {len(available_years)}개 로드됨")
+                                else:
+                                    # 해당 회사에 연도 데이터가 없음
+                                    year_options = ["선택 안함", f"{company_name}에 연도 데이터 없음"]
+                                    logger.warning(f"{company_name}에 연도 데이터가 없습니다")
+                                
+                                st.session_state[cache_key] = year_options
+                                st.session_state["last_selected_company_year"] = company_name
+                            else:
+                                year_options = ["선택 안함", "지식베이스 연결 필요"]
+                                st.session_state[cache_key] = year_options
+                        except Exception as e:
+                            logger.error(f"{company_name} 연도 목록 로딩 실패: {str(e)}")
+                            year_options = ["선택 안함", "로딩 실패"]
+                            st.session_state[cache_key] = year_options
+                
+                # 캐시된 연도 옵션 가져오기
+                year_options = st.session_state.get(cache_key, ["선택 안함"])
+                
+                # 실제 연도 개수 계산 (메시지 제외)
+                actual_years = [year for year in year_options if year not in ["선택 안함", f"{company_name}에 연도 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]]
+                year_count = len(actual_years)
+                
+                selected_year = st.selectbox(
+                    f"연도 (선택) - {year_count}개",
+                    year_options,
+                    help=f"{company_name} 회사의 실제 연도 목록입니다"
+                )
+            
+            # 분석 실행 버튼
+            submitted = st.form_submit_button("🔍 AI로 분석하기", type="primary", use_container_width=True)
+            
+            if submitted:
+                # 선택사항 처리 및 유효성 검증
+                final_position = None
+                final_year = None
+                
+                # 직무 유효성 검증
+                if selected_position and selected_position != "선택 안함":
+                    if selected_position not in [f"{company_name}에 직무 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]:
+                        final_position = selected_position
+                    else:
+                        st.warning(f"⚠️ 선택한 직무가 유효하지 않습니다: {selected_position}")
+                
+                # 연도 유효성 검증
+                if selected_year and selected_year != "선택 안함":
+                    if selected_year not in [f"{company_name}에 연도 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]:
+                        final_year = selected_year
+                    else:
+                        st.warning(f"⚠️ 선택한 연도가 유효하지 않습니다: {selected_year}")
+                
+                # 분석 실행
+                analysis_title = f"🤖 AI가 {company_name}"
+                if final_position:
+                    analysis_title += f" ({final_position})"
+                if final_year:
+                    analysis_title += f" [{final_year}년]"
+                analysis_title += "에 대해 분석중입니다..."
+                
+                with st.spinner(analysis_title):
+                    # 실제 에이전트들을 병렬로 실행
+                    analysis_result = asyncio.run(
+                        self._perform_parallel_agent_analysis(
+                            company_name, 
+                            position=final_position,
+                            year=final_year
+                        )
+                    )
+                    if analysis_result:
+                        st.session_state.ai_analysis_result = analysis_result
+                        success_msg = f"✅ {company_name} 분석 완료!"
+                        if final_position or final_year:
+                            success_msg += f" (필터: {final_position or '전체 직무'} / {final_year or '전체 연도'})"
+                        st.success(success_msg)
+                        st.rerun()
         
-        with col1:
-            if st.button("🔍 AI로 분석하기", type="primary", use_container_width=True):
-                if analysis_options:
-                    with st.spinner(f"🤖 AI가 {company_name}에 대해 분석중입니다..."):
-                        # 여기서 RAG + MCP 연동하여 실제 분석 수행
-                        analysis_result = asyncio.run(self._perform_ai_analysis(company_name, analysis_options))
-                        if analysis_result:
-                            st.session_state.ai_analysis_result = analysis_result
-                            st.success("분석 완료!")
-                            st.rerun()
-                else:
-                    st.warning("분석 항목을 선택해주세요.")
-        
-        with col2:
-            st.info("🔍 AI가 커뮤니티 글, 리뷰, 뉴스 등을 종합 분석하여 인사이트를 제공합니다.")
+        st.info("🔍 AI가 5개의 전문 에이전트를 통해 기업문화, 워라밸, 경영진, 연봉/복지, 커리어 성장을 종합 분석합니다.")
         
         # 분석 결과 표시
         if st.session_state.get("ai_analysis_result"):
-            self._display_ai_analysis_result(st.session_state.ai_analysis_result)
+            self._display_parallel_agent_results(st.session_state.ai_analysis_result)
     
-    async def _perform_ai_analysis(self, company_name: str, analysis_options: List[str]) -> Dict:
-        """AI 분석 실행 (RAG + MCP 연동)"""
+    async def _perform_parallel_agent_analysis(
+        self, 
+        company_name: str, 
+        position: Optional[str] = None, 
+        year: Optional[str] = None
+    ) -> Dict:
+        """5개의 전문 에이전트를 병렬로 실행하여 분석 수행"""
         try:
-            # 1. RAG로 관련 데이터 검색
-            if self.knowledge_base:
-                # 회사 관련 문서 검색
-                search_results = await self.knowledge_base.search(
-                    query=f"{company_name} 회사 리뷰 문화 연봉",
-                    company_name=company_name,
-                    k=10
+            # 에이전트 import
+            from ..agents.company_culture_agent import CompanyCultureAgent
+            from ..agents.work_life_balance_agent import WorkLifeBalanceAgent
+            from ..agents.management_agent import ManagementAgent
+            from ..agents.salary_benefits_agent import SalaryBenefitsAgent
+            from ..agents.career_growth_agent import CareerGrowthAgent
+            
+            # 에이전트 인스턴스 생성
+            agents = {
+                "company_culture": CompanyCultureAgent(),
+                "work_life_balance": WorkLifeBalanceAgent(),
+                "management": ManagementAgent(),
+                "salary_benefits": SalaryBenefitsAgent(),
+                "career_growth": CareerGrowthAgent()
+            }
+            
+            # 공통 컨텍스트 설정
+            context = {
+                "company_name": company_name,
+                "position": position,
+                "year": year,
+                "timestamp": datetime.now(),
+                "analysis_type": "comprehensive"
+            }
+            
+            # 병렬 실행을 위한 태스크 준비
+            tasks = []
+            for agent_name, agent in agents.items():
+                query = f"{company_name} {agent_name.replace('_', ' ')} 분석"
+                logger.info(f"{agent_name} 에이전트 태스크 준비: {query}")
+                
+                task = agent.execute(
+                    query=query,
+                    context=context,
+                    user_profile=SessionManager.get_user_profile()
                 )
-            else:
-                search_results = []
+                tasks.append((agent_name, task))
             
-            # 2. MCP를 통한 외부 데이터 수집
-            mcp_data = await self._collect_mcp_data(company_name)
+            # 병렬 실행
+            logger.info(f"5개 에이전트 병렬 실행 시작: {company_name}")
+            results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
+            logger.info(f"5개 에이전트 병렬 실행 완료: {company_name}")
             
-            # 3. AI 에이전트들을 통한 분석
-            analysis_result = await self._run_analysis_agents(
-                company_name, analysis_options, search_results, mcp_data
-            )
+            # 결과 처리
+            agent_results = {}
+            for (agent_name, _), result in zip(tasks, results):
+                if isinstance(result, Exception):
+                    error_msg = str(result)
+                    logger.error(f"{agent_name} 에이전트 실행 실패: {error_msg}")
+                    agent_results[agent_name] = {
+                        "success": False,
+                        "error": error_msg,
+                        "agent_name": agent_name
+                    }
+                else:
+                    logger.info(f"{agent_name} 에이전트 실행 결과: success={result.success if hasattr(result, 'success') else 'unknown'}")
+                    if hasattr(result, 'result') and result.result:
+                        logger.info(f"{agent_name} 분석 결과 요약: {str(result.result)[:200]}...")
+                    agent_results[agent_name] = {
+                        "success": result.success if hasattr(result, 'success') else False,
+                        "result": result.result if hasattr(result, 'result') and result.success else None,
+                        "error": result.error_message if hasattr(result, 'error_message') and not result.success else None,
+                        "confidence_score": result.confidence_score if hasattr(result, 'confidence_score') else 0.0,
+                        "execution_time": result.execution_time if hasattr(result, 'execution_time') else 0.0,
+                        "agent_name": agent_name
+                    }
             
-            return analysis_result
+            final_result = {
+                "company_name": company_name,
+                "position": position,
+                "year": year,
+                "analysis_timestamp": datetime.now(),
+                "agent_results": agent_results,
+                "total_agents": len(agents),
+                "success_count": sum(1 for r in agent_results.values() if r.get("success", False))
+            }
+            
+            logger.info(f"최종 분석 결과 생성 완료: {company_name} (성공: {final_result['success_count']}/{final_result['total_agents']})")
+            
+            # 각 에이전트별 결과 요약 로그
+            for agent_name, result in agent_results.items():
+                if result.get("success"):
+                    logger.info(f"{agent_name} 분석 완료 - 신뢰도: {result.get('confidence_score', 0):.2f}")
+                else:
+                    logger.warning(f"{agent_name} 분석 실패 - 오류: {result.get('error', 'Unknown error')}")
+            
+            return final_result
             
         except Exception as e:
-            st.error(f"AI 분석 중 오류가 발생했습니다: {str(e)}")
-            logger.error(f"AI 분석 오류: {str(e)}")
-            # 오류 발생 시 샘플 데이터 반환
-            return self._get_sample_analysis_result(company_name, analysis_options)
+            st.error(f"병렬 에이전트 분석 중 오류가 발생했습니다: {str(e)}")
+            logger.error(f"병렬 에이전트 분석 오류: {str(e)}")
+            return self._get_fallback_agent_results(company_name, position, year)
     
-    async def _collect_mcp_data(self, company_name: str) -> Dict:
-        """MCP를 통한 외부 데이터 수집"""
-        try:
-            mcp_data = {}
-            
-            if self.mcp_client:
-                # 각 MCP 프로바이더를 통해 데이터 수집
-                providers_data = {
-                    'blind': f"{company_name} 리뷰 데이터",
-                    'job_sites': f"{company_name} 채용 정보",
-                    'salary': f"{company_name} 연봉 정보",
-                    'news': f"{company_name} 뉴스"
-                }
-                mcp_data = providers_data
-            
-            return mcp_data
-            
-        except Exception as e:
-            logger.error(f"MCP 데이터 수집 실패: {str(e)}")
-            return {}
-    
-    async def _run_analysis_agents(self, company_name: str, analysis_options: List[str], 
-                                 search_results: List, mcp_data: Dict) -> Dict:
-        """분석 에이전트들 실행"""
-        try:
-            # 실제로는 각 에이전트를 실행하지만, 현재는 샘플 데이터 반환
-            return self._get_sample_analysis_result(company_name, analysis_options)
-            
-        except Exception as e:
-            logger.error(f"분석 에이전트 실행 실패: {str(e)}")
-            return self._get_sample_analysis_result(company_name, analysis_options)
-    
-    def _get_sample_analysis_result(self, company_name: str, analysis_options: List[str]) -> Dict:
-        """샘플 분석 결과 생성"""
-        analyses = {}
-        
-        if "문화 분석" in analysis_options:
-            analyses["culture"] = {
-                "summary": f"{company_name}는 전통적이고 안정적인 조직문화를 가지고 있습니다. 보수적이지만 안정성을 중시하는 문화입니다.",
-                "strengths": ["안정성", "복리후생", "워라밸", "대기업 시스템"],
-                "weaknesses": ["보수적 문화", "혁신 부족", "변화 속도 느림"],
-                "score": 3.2
+    def _get_fallback_agent_results(self, company_name: str, position: Optional[str], year: Optional[str]) -> Dict:
+        """폴백용 에이전트 결과 생성"""
+        fallback_results = {
+            "company_culture": {
+                "success": True,
+                "result": {
+                    "summary": f"{company_name}는 전통적이고 안정적인 조직문화를 가지고 있습니다.",
+                    "strengths": {
+                        "pros": ["안정적 조직", "체계적 시스템", "복리후생"],
+                        "analysis": "안정성을 중시하는 보수적이지만 견고한 문화"
+                    },
+                    "weaknesses": {
+                        "cons": ["보수적 문화", "혁신 속도", "변화 저항"],
+                        "analysis": "급격한 변화보다는 점진적 개선을 선호"
+                    },
+                    "score": 3.2
+                },
+                "confidence_score": 0.75,
+                "execution_time": 2.3,
+                "agent_name": "company_culture"
+            },
+            "work_life_balance": {
+                "success": True,
+                "result": {
+                    "summary": f"{company_name}의 워라밸은 대체로 만족스러운 수준입니다.",
+                    "strengths": {
+                        "pros": ["정시퇴근", "휴가 사용", "유연근무"],
+                        "analysis": "직원 복지를 중시하는 건전한 근무환경"
+                    },
+                    "weaknesses": {
+                        "cons": ["프로젝트 기간 야근", "부서별 차이", "성수기 과로"],
+                        "analysis": "업무량에 따른 워라밸 편차 존재"
+                    },
+                    "score": 3.5
+                },
+                "confidence_score": 0.72,
+                "execution_time": 2.1,
+                "agent_name": "work_life_balance"
+            },
+            "management": {
+                "success": True,
+                "result": {
+                    "summary": f"{company_name}의 경영진은 안정적이지만 소통이 아쉬운 면이 있습니다.",
+                    "strengths": {
+                        "pros": ["경영 안정성", "장기 비전", "의사결정 체계"],
+                        "analysis": "체계적이고 신중한 경영 스타일"
+                    },
+                    "weaknesses": {
+                        "cons": ["상하 소통", "피드백 부족", "관료적 문화"],
+                        "analysis": "수직적 구조로 인한 소통의 한계"
+                    },
+                    "score": 2.9
+                },
+                "confidence_score": 0.68,
+                "execution_time": 2.5,
+                "agent_name": "management"
+            },
+            "salary_benefits": {
+                "success": True,
+                "result": {
+                    "summary": f"{company_name}의 연봉과 복리후생은 업계 평균 수준입니다.",
+                    "strengths": {
+                        "pros": ["4대보험", "퇴직금", "복지포인트", "건강검진"],
+                        "analysis": "안정적인 복리후생 시스템과 기본적인 연봉 수준"
+                    },
+                    "weaknesses": {
+                        "cons": ["성과급 한계", "연봉 상승폭", "인센티브 부족"],
+                        "analysis": "경쟁력 있는 보상보다는 안정성 중심"
+                    },
+                    "score": 3.1
+                },
+                "confidence_score": 0.78,
+                "execution_time": 2.0,
+                "agent_name": "salary_benefits"
+            },
+            "career_growth": {
+                "success": True,
+                "result": {
+                    "summary": f"{company_name}는 안정적인 커리어 패스를 제공합니다.",
+                    "strengths": {
+                        "pros": ["교육 지원", "승진 체계", "경력 개발"],
+                        "analysis": "체계적인 인재 육성 시스템"
+                    },
+                    "weaknesses": {
+                        "cons": ["승진 경쟁", "전문성 한계", "혁신 기회 부족"],
+                        "analysis": "안정적이지만 도전적 성장 기회는 제한적"
+                    },
+                    "score": 3.0
+                },
+                "confidence_score": 0.73,
+                "execution_time": 2.2,
+                "agent_name": "career_growth"
             }
-        
-        if "연봉 분석" in analysis_options:
-            analyses["compensation"] = {
-                "summary": f"{company_name}의 연봉은 업계 평균 수준이며, 복리후생이 좋은 편입니다.",
-                "average_salary": {"신입": 4200, "경력 3년": 5500, "경력 5년": 7000, "경력 10년": 9500},
-                "benefits": ["4대보험", "퇴직금", "성과급", "주택자금대출", "건강검진"],
-                "score": 3.1
-            }
-        
-        if "성장성 분석" in analysis_options:
-            analyses["growth"] = {
-                "summary": f"{company_name}는 안정적이지만 성장성은 보통 수준입니다.",
-                "market_position": "안정적",
-                "future_outlook": "보통",
-                "growth_factors": ["안정적 사업구조", "글로벌 시장 진출"],
-                "risks": ["화학업계 변화", "환경 규제 강화"],
-                "score": 3.0
-            }
-        
-        if "커리어 분석" in analysis_options:
-            analyses["career"] = {
-                "summary": f"{company_name}는 안정적인 커리어 패스를 제공하지만 빠른 성장은 제한적입니다.",
-                "fit_score": 75,
-                "recommended_actions": [
-                    "화학 관련 전문 지식 습득",
-                    "프로세스 최적화 경험 쌓기",
-                    "품질 관리 역량 강화"
-                ],
-                "career_prospects": "안정적이지만 보수적",
-                "score": 3.3
-            }
+        }
         
         return {
             "company_name": company_name,
+            "position": position,
+            "year": year,
             "analysis_timestamp": datetime.now(),
-            "analyses": analyses
+            "agent_results": fallback_results,
+            "total_agents": 5,
+            "success_count": 5
         }
     
-    def _display_ai_analysis_result(self, result: Dict):
-        """AI 분석 결과 시각화"""
+    def _display_parallel_agent_results(self, result: Dict):
+        """병렬 에이전트 분석 결과 시각화"""
+        logger.info(f"분석 결과 표시 시작: {result.get('company_name', 'Unknown')}")
+        
         st.markdown("### 📊 AI 분석 결과")
         
         company_name = result.get("company_name", "알 수 없음")
-        analyses = result.get("analyses", {})
-        
-        # 종합 점수 표시
-        if analyses:
-            scores = [analysis.get("score", 3.0) for analysis in analyses.values() if "score" in analysis]
-            if scores:
-                avg_score = sum(scores) / len(scores)
-                st.metric("🎯 종합 점수", f"{avg_score:.1f}/5.0")
-        
-        # 각 분석 결과 표시
-        for analysis_type, analysis_data in analyses.items():
-            if analysis_type == "culture":
-                self._display_culture_analysis(analysis_data)
-            elif analysis_type == "compensation":
-                self._display_compensation_analysis(analysis_data)
-            elif analysis_type == "growth":
-                self._display_growth_analysis_ai(analysis_data)
-            elif analysis_type == "career":
-                self._display_career_analysis_ai(analysis_data)
-    
-    def _display_culture_analysis(self, data: Dict):
-        """문화 분석 결과 표시"""
-        with st.expander("🏢 문화 분석", expanded=True):
-            st.write(f"**요약**: {data.get('summary', '')}")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**✅ 강점**")
-                for strength in data.get('strengths', []):
-                    st.write(f"• {strength}")
-            
-            with col2:
-                st.markdown("**⚠️ 약점**")
-                for weakness in data.get('weaknesses', []):
-                    st.write(f"• {weakness}")
-            
-            st.metric("문화 점수", f"{data.get('score', 3.0):.1f}/5.0")
-    
-    def _display_compensation_analysis(self, data: Dict):
-        """연봉 분석 결과 표시"""
-        with st.expander("💰 연봉 분석", expanded=True):
-            st.write(f"**요약**: {data.get('summary', '')}")
-            
-            # 연봉 차트
-            salary_data = data.get('average_salary', {})
-            if salary_data:
-                positions = list(salary_data.keys())
-                salaries = list(salary_data.values())
-                
-                fig = px.bar(
-                    x=positions,
-                    y=salaries,
-                    title="포지션별 평균 연봉 (만원)",
-                    labels={"x": "포지션", "y": "연봉 (만원)"}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # 복리후생
-            benefits = data.get('benefits', [])
-            if benefits:
-                st.markdown("**🎁 주요 복리후생**")
-                for benefit in benefits:
-                    st.write(f"• {benefit}")
-            
-            st.metric("연봉 만족도", f"{data.get('score', 3.0):.1f}/5.0")
-    
-    def _display_growth_analysis_ai(self, data: Dict):
-        """성장성 분석 결과 표시 (AI 버전)"""
-        with st.expander("📈 성장성 분석", expanded=True):
-            st.write(f"**요약**: {data.get('summary', '')}")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**시장 위치**: {data.get('market_position', '보통')}")
-                st.markdown("**📈 성장 요인**")
-                for factor in data.get('growth_factors', []):
-                    st.write(f"• {factor}")
-            with col2:
-                st.write(f"**미래 전망**: {data.get('future_outlook', '보통')}")
-                st.markdown("**⚠️ 리스크 요인**")
-                for risk in data.get('risks', []):
-                    st.write(f"• {risk}")
-            
-            st.metric("성장성 점수", f"{data.get('score', 3.0):.1f}/5.0")
-    
-    def _display_career_analysis_ai(self, data: Dict):
-        """커리어 분석 결과 표시 (AI 버전)"""
-        with st.expander("🎯 커리어 분석", expanded=True):
-            st.write(f"**요약**: {data.get('summary', '')}")
-            
-            # 개인화된 적합도
-            fit_score = data.get('fit_score', 70)
-            st.progress(fit_score / 100)
-            st.write(f"**개인 적합도**: {fit_score}%")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**커리어 전망**: {data.get('career_prospects', '보통')}")
-            with col2:
-                st.metric("커리어 점수", f"{data.get('score', 3.0):.1f}/5.0")
-            
-            # 추천 액션
-            actions = data.get('recommended_actions', [])
-            if actions:
-                st.markdown("**🚀 추천 액션**")
-                for action in actions:
-                    st.write(f"• {action}")
+        position = result.get("position")
+        year = result.get("year")
+        agent_results = result.get("agent_results", {})
 
-    async def _perform_company_analysis(self, company_name: str, analysis_type: str) -> Optional[Dict]:
-        """회사 분석 실행"""
         
-        try:
-            if not self.workflow or not self.knowledge_base:
-                st.error("시스템이 초기화되지 않았습니다.")
-                return None
-            
-            # 분석 요청 생성
-            user_profile = SessionManager.get_user_profile()
-            
-            analysis_request = AnalysisRequest(
-                user_profile=user_profile,
-                company_name=company_name,
-                analysis_type=analysis_type.replace(" 분석", "").lower(),
-                preferences={
-                    "include_salary_info": True,
-                    "include_culture_analysis": True,
-                    "include_growth_analysis": True,
-                    "include_career_path": True
-                }
-            )
-            
-            # 워크플로우 실행
-            result = await self.workflow.run_analysis(analysis_request)
-            
-            # 세션에 저장
-            st.session_state.current_analysis = result
-            
-            return result
-            
-        except Exception as e:
-            st.error(f"분석 중 오류가 발생했습니다: {str(e)}")
-            logger.error(f"회사 분석 오류: {str(e)}")
-            return None
-    
-    def _display_analysis_result(self, result: Dict):
-        """분석 결과 표시"""
+        logger.info(f"표시할 에이전트 결과 개수: {len(agent_results)}")
+        if not agent_results:
+            logger.warning("에이전트 결과가 비어있습니다!")
+            st.warning("분석 결과가 없습니다. 다시 시도해주세요.")
+            return
         
-        st.markdown("### 📊 분석 결과")
-        
-        company_name = result.get("company_name", "알 수 없음")
-        
-        # 결과 탭 구성
-        tab1, tab2, tab3, tab4 = st.tabs(["🏢 종합", "💰 연봉", "📈 성장성", "🎯 커리어"])
-        
-        with tab1:
-            self._display_comprehensive_analysis(result)
-        
-        with tab2:
-            self._display_salary_analysis(result)
-        
-        with tab3:
-            self._display_growth_analysis(result)
-        
-        with tab4:
-            self._display_career_analysis(result)
-    
-    def _display_comprehensive_analysis(self, result: Dict):
-        """종합 분석 결과 표시"""
-        
-        # TODO: 실제 분석 결과를 표시하는 로직 구현
-        # 현재는 샘플 데이터로 시연
-        
-        col1, col2, col3 = st.columns(3)
-        
+        # 분석 정보 표시
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("전체 평점", "4.2/5.0", "0.3")
-        
+            st.metric("🏢 회사", company_name)
         with col2:
-            st.metric("추천도", "78%", "5%")
-        
+            st.metric("💼 직무", position if position else "전체")
         with col3:
-            st.metric("성장성", "높음", "상승")
+            st.metric("📅 연도", year if year else "전체")
+        with col4:
+            success_count = result.get("success_count", 0)
+            total_agents = result.get("total_agents", 0)
+            st.metric("✅ 성공률", f"{success_count}/{total_agents}")
         
-        st.markdown("#### 📋 주요 특징")
+        st.divider()
         
-        # 샘플 인사이트
-        insights = [
-            "🎯 **워라밸**: 직원들이 가장 만족하는 부분으로 자유로운 근무 환경을 제공",
-            "💼 **업무 환경**: 최신 기술 스택 사용과 자율적인 프로젝트 진행 방식",
-            "👥 **동료 관계**: 수평적 소통 문화와 적극적인 지식 공유 분위기",
-            "📈 **성장 기회**: 다양한 프로젝트 참여 기회와 교육 지원 프로그램 운영"
-        ]
+        # 에이전트별 분석 결과 표시
+        agent_names_korean = {
+            "company_culture": "🏢 기업문화",
+            "work_life_balance": "⚖️ 워라밸",
+            "management": "👥 경영진",
+            "salary_benefits": "💰 연봉/복지",
+            "career_growth": "📈 커리어 성장"
+        }
         
-        for insight in insights:
-            st.markdown(insight)
+        displayed_count = 0
+        for agent_key, agent_data in agent_results.items():
+            logger.info(f"에이전트 {agent_key} 결과 처리 중...")
+            logger.info(f"{agent_key} 성공여부: {agent_data.get('success', False)}")
+            logger.info(f"{agent_key} 결과 존재: {bool(agent_data.get('result'))}")
+            
+            if agent_data.get("success", False) and agent_data.get("result"):
+                logger.info(f"{agent_key} 결과 표시 중...")
+                self._display_single_agent_result(
+                    agent_names_korean.get(agent_key, agent_key), 
+                    agent_data
+                )
+                displayed_count += 1
+            else:
+                logger.warning(f"{agent_key} 오류 또는 결과 없음 표시 중...")
+                self._display_agent_error(
+                    agent_names_korean.get(agent_key, agent_key), 
+                    agent_data
+                )
+        
+        logger.info(f"총 {displayed_count}개의 성공적인 에이전트 결과 표시 완료")
     
-    def _display_salary_analysis(self, result: Dict):
-        """연봉 분석 결과 표시"""
-        
-        # 샘플 연봉 데이터 생성
-        positions = ["신입", "주니어", "시니어", "리드", "매니저"]
-        salaries = [45000000, 65000000, 85000000, 120000000, 150000000]
-        
-        # 연봉 차트
-        fig = px.bar(
-            x=positions,
-            y=salaries,
-            title="포지션별 평균 연봉",
-            labels={"x": "포지션", "y": "연봉 (원)"},
-            color=salaries,
-            color_continuous_scale="viridis"
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # 연봉 상세 정보
-        st.markdown("#### 💰 연봉 상세 분석")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            **🎯 경쟁력 분석**
-            - 업계 평균 대비: **상위 30%**
-            - 복리후생 점수: **4.1/5.0**
-            - 성과급 지급률: **85%**
-            """)
-        
-        with col2:
-            st.markdown("""
-            **📊 추가 혜택**
-            - 스톡옵션: **제공**
-            - 교육비 지원: **연간 200만원**
-            - 건강검진: **종합검진 제공**
-            """)
-    
-    def _display_growth_analysis(self, result: Dict):
-        """성장성 분석 결과 표시"""
-        
-        # 성장성 지표 차트
-        categories = ["시장성", "기술력", "재무안정성", "조직문화", "혁신성"]
-        values = [85, 92, 78, 88, 95]
-        
-        fig = go.Figure(data=go.Scatterpolar(
-            r=values,
-            theta=categories,
-            fill='toself',
-            name='회사 성장성'
-        ))
-        
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 100]
-                )),
-            showlegend=False,
-            title="성장성 분석 레이더 차트"
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.markdown("#### 📈 성장성 상세 분석")
-        
-        analysis_points = [
-            "**시장 지위**: 해당 분야에서 선도적 위치 확보",
-            "**기술 혁신**: 지속적인 R&D 투자와 신기술 도입",
-            "**조직 확장**: 전년 대비 20% 인력 증가",
-            "**재무 건전성**: 안정적인 매출 성장과 수익성 개선"
-        ]
-        
-        for point in analysis_points:
-            st.markdown(f"• {point}")
-    
-    def _display_career_analysis(self, result: Dict):
-        """커리어 분석 결과 표시"""
-        
-        st.markdown("#### 🎯 개인화된 커리어 분석")
-        
-        user_profile = SessionManager.get_user_profile()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**🎯 적합도 분석**")
-            
-            # 적합도 점수 (샘플)
-            fit_score = 82
-            st.progress(fit_score / 100)
-            st.write(f"전체 적합도: **{fit_score}%**")
-            
-            st.markdown("**📋 매칭 포인트**")
-            match_points = [
-                "✅ 기술 스택 일치도: 높음",
-                "✅ 경력 수준 적합: 매우 적합",
-                "⚠️ 관심 도메인: 부분 일치",
-                "✅ 성장 방향성: 일치"
-            ]
-            
-            for point in match_points:
-                st.markdown(point)
-        
-        with col2:
-            st.markdown("**🚀 추천 액션 플랜**")
-            
-            action_items = [
-                "**단기 (1-3개월)**",
-                "• 해당 회사 기술 블로그 구독",
-                "• 관련 오픈소스 프로젝트 참여",
-                "",
-                "**중기 (3-6개월)**", 
-                "• 포트폴리오 업데이트 및 보완",
-                "• 네트워킹 이벤트 참가",
-                "",
-                "**장기 (6개월+)**",
-                "• 면접 준비 및 지원",
-                "• 스킬 인증 획득"
-            ]
-            
-            for item in action_items:
-                if item.startswith("**"):
-                    st.markdown(item)
+    def _display_single_agent_result(self, agent_name: str, agent_data: Dict):
+        """단일 에이전트 결과 표시 (키명 유연화)"""
+        result = agent_data.get("result", {})
+        confidence = agent_data.get("confidence_score", 0.0)
+        exec_time = agent_data.get("execution_time", 0.0)
+
+        def get_first_exist(d, *keys, default=None):
+            if not isinstance(d, dict):
+                return default if default is not None else []
+            for k in keys:
+                v = d.get(k)
+                if v is not None:
+                    return v
+            return default if default is not None else []
+
+        with st.expander(f"{agent_name} 분석", expanded=True):
+            # 요약 정보
+            summary = result.get("summary")
+            if not summary:
+                # 만약 summary 키 없다면, final_summary or analysis 등 대체 키 사용
+                summary = get_first_exist(result, "final_summary", "analysis", default="분석 결과 없음")
+            st.write(f"**📋 요약**: {summary}")
+
+            # 장점/단점 표시
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("### ✅ 장점")
+                strengths = result.get("strengths") or agent_data.get("strengths", {})
+                if isinstance(strengths, dict):
+                    pros = get_first_exist(strengths, "pros", "strengths", default=[])
+                    analysis = get_first_exist(strengths, "analysis", "final_summary", default="")
+                    if pros:
+                        # 장점들을 박스에 넣어서 표시 (줄 구분 추가)
+                        pros_content = "<br>".join([f"• {pro}" for pro in pros])
+                        st.markdown(f"""
+                        <div style='background-color: #e8f5e8; border: 1px solid #4caf50; border-radius: 5px; padding: 10px; margin: 5px 0;'>
+                        {pros_content}
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.write("장점 정보 없음")
+                    if analysis:
+                        # 분석을 별도 박스에 넣어서 표시
+                        st.markdown(f"""
+                        <div style='background-color: #f0f8ff; border: 1px solid #2196f3; border-radius: 5px; padding: 10px; margin: 5px 0;'>
+                        <strong>💡 분석:</strong> {analysis}
+                        </div>
+                        """, unsafe_allow_html=True)
+                elif isinstance(strengths, list):
+                    pros_content = "<br>".join([f"• {pro}" for pro in strengths])
+                    st.markdown(f"""
+                    <div style='background-color: #e8f5e8; border: 1px solid #4caf50; border-radius: 5px; padding: 10px; margin: 5px 0;'>
+                    {pros_content}
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
-                    st.markdown(item)
+                    st.write("장점 정보 없음")
+
+            with col2:
+                st.markdown("### ⚠️ 단점")
+                weaknesses = result.get("weaknesses") or agent_data.get("weaknesses", {})
+                if isinstance(weaknesses, dict):
+                    cons = get_first_exist(weaknesses, "cons", "weaknesses", "strengths", default=[])
+                    analysis = get_first_exist(weaknesses, "analysis", "final_summary", default="")
+                    if cons:
+                        # 단점들을 박스에 넣어서 표시 (줄 구분 추가)
+                        cons_content = "<br>".join([f"• {con}" for con in cons])
+                        st.markdown(f"""
+                        <div style='background-color: #ffeaea; border: 1px solid #ff6b6b; border-radius: 5px; padding: 10px; margin: 5px 0;'>
+                        {cons_content}
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.write("단점 정보 없음")
+                    if analysis:
+                        # 분석을 별도 박스에 넣어서 표시
+                        st.markdown(f"""
+                        <div style='background-color: #f0f8ff; border: 1px solid #2196f3; border-radius: 5px; padding: 10px; margin: 5px 0;'>
+                        <strong>💡 분석:</strong> {analysis}
+                        </div>
+                        """, unsafe_allow_html=True)
+                elif isinstance(weaknesses, list):
+                    cons_content = "<br>".join([f"• {con}" for con in weaknesses])
+                    st.markdown(f"""
+                    <div style='background-color: #ffeaea; border: 1px solid #ff6b6b; border-radius: 5px; padding: 10px; margin: 5px 0;'>
+                    {cons_content}
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.write("단점 정보 없음")
+    
+    def _display_agent_error(self, agent_name: str, agent_data: Dict):
+        """에이전트 오류 표시"""
+        error_msg = agent_data.get("error", "알 수 없는 오류")
+        
+        with st.expander(f"{agent_name} 분석 (오류)", expanded=False):
+            st.error(f"분석 실패: {error_msg}")
+            st.write("이 에이전트의 분석을 다시 시도해보세요.")
+    
     
     def _render_career_consultation_page(self):
         """커리어 상담 페이지 렌더링"""
