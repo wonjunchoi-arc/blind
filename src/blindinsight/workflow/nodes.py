@@ -11,19 +11,16 @@ LangGraph 워크플로우 노드 구현 - 초보자 가이드
 3. 진행률 업데이트: state.update_progress()로 진행 상황 추적
 4. 로깅: state.add_debug_log()로 실행 과정 기록
 
-🔧 커스터마이징 가이드:
-1. 새 노드 만들기:
-   - WorkflowNode 클래스 상속
-   - _execute_logic 메서드 구현
-   - NODE_REGISTRY에 등록
 
-2. 병렬 실행 노드:
-   - asyncio.gather() 사용
-   - 각 작업을 별도 태스크로 실행
+"""
+#node.py
+"""
+LangGraph 워크플로우 노드 - 에이전트 구조 최적화
 
-3. 조건부 노드:
-   - state.should_skip_stage()로 건너뛰기 체크
-   - 다양한 조건에 따른 분기 처리
+전문 에이전트 5개에 맞춘 노드 설계:
+- 각 노드는 해당 전문 에이전트를 호출
+- 표준화된 에이전트 결과 처리
+- 불필요한 복잡성 제거
 """
 
 import asyncio
@@ -37,385 +34,379 @@ from .state import WorkflowState
 
 
 class WorkflowNode:
-    """
-    🏗️ 워크플로우 노드의 기본 클래스 - 모든 노드의 부모 클래스
-    
-    📚 LangGraph 노드 패턴:
-    - 각 노드는 상태를 받아서 처리하고 수정된 상태를 반환
-    - 실행 시간 측정, 에러 처리, 로깅이 자동으로 처리됨
-    
-    🔧 커스터마이징 방법:
-    1. 새 노드 클래스 생성:
-       class MyCustomNode(WorkflowNode):
-           def __init__(self):
-               super().__init__("my_custom_node")
-           
-           async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-               # 여기에 실제 로직 구현
-               return state
-    
-    2. 에러 처리 커스터마이징:
-       try-except 블록에서 state.add_error() 사용
-    
-    3. 진행률 업데이트:
-       state.update_progress(new_progress_value)
-    """
+    """워크플로우 노드 기본 클래스"""
     
     def __init__(self, name: str):
         self.name = name
     
     async def execute(self, state: WorkflowState) -> WorkflowState:
-        """
-        노드 실행 메서드 - 모든 노드 공통 처리 로직
-        
-        🔄 실행 흐름:
-        1. 시작 시간 기록
-        2. 현재 단계 업데이트
-        3. 실제 로직 실행 (_execute_logic)
-        4. 실행 시간 기록
-        5. 에러 발생 시 상태에 에러 추가
-        """
+        """노드 실행 - 공통 처리 로직"""
         start_time = time.time()
         state.update_stage(self.name)
-        state.add_debug_log(f"Starting execution of node: {self.name}")
+        state.add_debug_log(f"Starting {self.name}")
         
         try:
-            # 💡 핵심: 실제 노드별 로직은 _execute_logic에서 구현
             result_state = await self._execute_logic(state)
-            
-            # 📊 성능 측정: 실행 시간 기록
             duration = time.time() - start_time
             state.record_stage_timing(self.name, duration)
-            
-            state.add_debug_log(f"Completed execution of node: {self.name} in {duration:.2f}s")
+            state.add_debug_log(f"Completed {self.name} in {duration:.2f}s")
             return result_state
             
         except Exception as e:
-            # 🚨 에러 처리: 실행 시간 기록 후 에러 상태 추가
             duration = time.time() - start_time
             state.record_stage_timing(self.name, duration)
             state.add_error(f"Node execution failed: {str(e)}")
             return state
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """
-        📝 서브클래스에서 반드시 구현해야 하는 메서드
-        
-        여기에 실제 노드의 비즈니스 로직을 구현합니다.
-        예시:
-        - AI 에이전트 호출
-        - 데이터 처리
-        - 외부 API 호출
-        - 결과 분석
-        """
-        raise NotImplementedError("Subclasses must implement _execute_logic method")
+        """서브클래스에서 구현할 실제 로직"""
+        raise NotImplementedError
 
 
 class InputValidationNode(WorkflowNode):
-    """Validates and processes input parameters."""
+    """입력 검증 노드"""
     
     def __init__(self):
         super().__init__("input_validation")
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """Validate input parameters and prepare state."""
-        
-        # Validate analysis request
+        """입력 파라미터 검증"""
         request = state.request
+        
         if not request.company or not request.company.strip():
             state.add_error("Company name is required")
             return state
         
-        # Normalize company name
+        # 회사명 정규화
         request.company = request.company.strip()
         
-        # Validate user profile if provided
+        # 사용자 프로필 검증
         if state.user_profile:
             try:
-                # Additional validation logic here
                 state.add_debug_log("User profile validation completed")
             except ValidationError as e:
                 state.add_warning(f"User profile validation warning: {str(e)}")
         
-        # Set initial progress
+        # 초기 진행률 설정
         state.update_progress(0.1)
         
-        # Initialize agent outputs storage
-        state.agent_outputs["input_validation"] = {
+        # 검증 결과 저장
+        state.store_agent_output("input_validation", {
             "validated_company": request.company,
             "validated_position": request.position,
             "has_user_profile": state.user_profile is not None,
             "analysis_type": request.analysis_type
-        }
+        })
         
         state.add_debug_log("Input validation completed successfully")
         return state
 
 
-class CultureAnalysisNode(WorkflowNode):
-    """Executes culture analysis using the Culture Analysis Agent."""
+class CompanyCultureNode(WorkflowNode):
+    """기업문화 분석 노드"""
     
     def __init__(self):
-        super().__init__("culture_analysis")
+        super().__init__("company_culture_analysis")
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """Execute culture analysis."""
-        
-        # Skip if not required
-        if state.should_skip_stage("culture_analysis"):
-            state.add_debug_log("Skipping culture analysis stage")
-            state.update_progress(state.progress + 0.2)
+        """기업문화 분석 실행"""
+        if state.should_skip_stage("company_culture_analysis"):
+            state.add_debug_log("Skipping company culture analysis")
+            state.update_progress(state.progress + 0.16)
             return state
         
         try:
-            # Import here to avoid circular imports
-            from ..agents.culture_agent import CultureAnalysisAgent
+            from ..agents.company_culture_agent import CompanyCultureAgent
             
-            # Initialize agent
-            culture_agent = CultureAnalysisAgent()
+            agent = CompanyCultureAgent()
+            state.add_debug_log("Starting company culture analysis")
             
-            # Execute analysis
-            state.add_debug_log("Starting culture analysis")
-            culture_report = await culture_agent.analyze_company_culture(
-                company=state.request.company,
-                position=state.request.position,
+            context = {
+                "company_name": state.request.company,
+                "position": state.request.position,
+                "timestamp": datetime.now(),
+                "analysis_type": "comprehensive"
+            }
+            
+            agent_result = await agent.execute(
+                query=state.request.company,
+                context=context,
                 user_profile=state.user_profile
             )
             
-            # Store results
-            state.culture_report = culture_report
-            state.store_agent_output("culture_agent", {
-                "culture_score": culture_report.culture_score,
-                "work_life_balance": culture_report.work_life_balance,
-                "confidence": culture_report.confidence_score
-            })
-            
-            # Update progress
-            state.update_progress(state.progress + 0.2)
-            state.add_debug_log("Culture analysis completed successfully")
+            if agent_result.success:
+                state.store_agent_result("company_culture", agent_result.result)
+                state.store_agent_output("company_culture_agent", {
+                    "analysis_data": agent_result.result,
+                    "confidence": agent_result.confidence_score,
+                    "execution_time": agent_result.execution_time
+                })
+                state.update_progress(state.progress + 0.16)
+                state.add_debug_log("Company culture analysis completed")
+            else:
+                state.add_error(f"Company culture analysis failed: {agent_result.error_message}")
             
         except Exception as e:
-            state.add_error(f"Culture analysis failed: {str(e)}")
+            state.add_error(f"Company culture analysis failed: {str(e)}")
         
         return state
 
 
-class CompensationAnalysisNode(WorkflowNode):
-    """Executes compensation analysis using the Compensation Analysis Agent."""
+class WorkLifeBalanceNode(WorkflowNode):
+    """워라밸 분석 노드"""
     
     def __init__(self):
-        super().__init__("compensation_analysis")
+        super().__init__("work_life_balance_analysis")
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """Execute compensation analysis."""
-        
-        if state.should_skip_stage("compensation_analysis"):
-            state.add_debug_log("Skipping compensation analysis stage")
-            state.update_progress(state.progress + 0.2)
+        """워라밸 분석 실행"""
+        if state.should_skip_stage("work_life_balance_analysis"):
+            state.add_debug_log("Skipping work life balance analysis")
+            state.update_progress(state.progress + 0.16)
             return state
         
         try:
-            from ..agents.compensation_agent import CompensationAnalysisAgent
+            from ..agents.work_life_balance_agent import WorkLifeBalanceAgent
             
-            compensation_agent = CompensationAnalysisAgent()
+            agent = WorkLifeBalanceAgent()
+            state.add_debug_log("Starting work life balance analysis")
             
-            state.add_debug_log("Starting compensation analysis")
-            compensation_report = await compensation_agent.analyze_compensation(
-                company=state.request.company,
-                position=state.request.position,
+            context = {
+                "company_name": state.request.company,
+                "position": state.request.position,
+                "timestamp": datetime.now(),
+                "analysis_type": "comprehensive"
+            }
+            
+            agent_result = await agent.execute(
+                query=state.request.company,
+                context=context,
                 user_profile=state.user_profile
             )
             
-            state.compensation_report = compensation_report
-            state.store_agent_output("compensation_agent", {
-                "salary_range": compensation_report.salary_range,
-                "salary_percentile": compensation_report.salary_percentile,
-                "confidence": compensation_report.confidence_score
-            })
-            
-            state.update_progress(state.progress + 0.2)
-            state.add_debug_log("Compensation analysis completed successfully")
+            if agent_result.success:
+                state.store_agent_result("work_life_balance", agent_result.result)
+                state.store_agent_output("work_life_balance_agent", {
+                    "analysis_data": agent_result.result,
+                    "confidence": agent_result.confidence_score,
+                    "execution_time": agent_result.execution_time
+                })
+                state.update_progress(state.progress + 0.16)
+                state.add_debug_log("Work life balance analysis completed")
+            else:
+                state.add_error(f"Work life balance analysis failed: {agent_result.error_message}")
             
         except Exception as e:
-            state.add_error(f"Compensation analysis failed: {str(e)}")
+            state.add_error(f"Work life balance analysis failed: {str(e)}")
         
         return state
 
 
-class GrowthAnalysisNode(WorkflowNode):
-    """Executes growth and stability analysis using the Growth & Stability Agent."""
+class ManagementNode(WorkflowNode):
+    """경영진 분석 노드"""
     
     def __init__(self):
-        super().__init__("growth_analysis")
+        super().__init__("management_analysis")
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """Execute growth analysis."""
-        
-        if state.should_skip_stage("growth_analysis"):
-            state.add_debug_log("Skipping growth analysis stage")
-            state.update_progress(state.progress + 0.2)
+        """경영진 분석 실행"""
+        if state.should_skip_stage("management_analysis"):
+            state.add_debug_log("Skipping management analysis")
+            state.update_progress(state.progress + 0.16)
             return state
         
         try:
-            from ..agents.growth_agent import GrowthStabilityAgent
+            from ..agents.management_agent import ManagementAgent
             
-            growth_agent = GrowthStabilityAgent()
+            agent = ManagementAgent()
+            state.add_debug_log("Starting management analysis")
             
-            state.add_debug_log("Starting growth analysis")
-            growth_report = await growth_agent.analyze_growth_stability(
-                company=state.request.company,
+            context = {
+                "company_name": state.request.company,
+                "position": state.request.position,
+                "timestamp": datetime.now(),
+                "analysis_type": "comprehensive"
+            }
+            
+            agent_result = await agent.execute(
+                query=state.request.company,
+                context=context,
                 user_profile=state.user_profile
             )
             
-            state.growth_report = growth_report
-            state.store_agent_output("growth_agent", {
-                "growth_score": growth_report.growth_score,
-                "stability_score": growth_report.stability_score,
-                "confidence": growth_report.confidence_score
-            })
-            
-            state.update_progress(state.progress + 0.2)
-            state.add_debug_log("Growth analysis completed successfully")
+            if agent_result.success:
+                state.store_agent_result("management", agent_result.result)
+                state.store_agent_output("management_agent", {
+                    "analysis_data": agent_result.result,
+                    "confidence": agent_result.confidence_score,
+                    "execution_time": agent_result.execution_time
+                })
+                state.update_progress(state.progress + 0.16)
+                state.add_debug_log("Management analysis completed")
+            else:
+                state.add_error(f"Management analysis failed: {agent_result.error_message}")
             
         except Exception as e:
-            state.add_error(f"Growth analysis failed: {str(e)}")
+            state.add_error(f"Management analysis failed: {str(e)}")
         
         return state
 
 
-class CareerAnalysisNode(WorkflowNode):
-    """Executes career path analysis using the Career Path Agent."""
+class SalaryBenefitsNode(WorkflowNode):
+    """연봉/복지 분석 노드"""
     
     def __init__(self):
-        super().__init__("career_analysis")
+        super().__init__("salary_benefits_analysis")
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """Execute career analysis."""
-        
-        if state.should_skip_stage("career_analysis"):
-            state.add_debug_log("Skipping career analysis stage")
-            state.update_progress(state.progress + 0.2)
+        """연봉/복지 분석 실행"""
+        if state.should_skip_stage("salary_benefits_analysis"):
+            state.add_debug_log("Skipping salary benefits analysis")
+            state.update_progress(state.progress + 0.16)
             return state
         
         try:
-            from ..agents.career_agent import CareerPathAgent
+            from ..agents.salary_benefits_agent import SalaryBenefitsAgent
             
-            career_agent = CareerPathAgent()
+            agent = SalaryBenefitsAgent()
+            state.add_debug_log("Starting salary benefits analysis")
             
-            state.add_debug_log("Starting career analysis")
-            career_report = await career_agent.analyze_career_path(
-                company=state.request.company,
-                position=state.request.position,
-                user_profile=state.user_profile,
-                culture_context=state.culture_report,
-                compensation_context=state.compensation_report
+            context = {
+                "company_name": state.request.company,
+                "position": state.request.position,
+                "timestamp": datetime.now(),
+                "analysis_type": "comprehensive"
+            }
+            
+            agent_result = await agent.execute(
+                query=state.request.company,
+                context=context,
+                user_profile=state.user_profile
             )
             
-            state.career_report = career_report
-            state.store_agent_output("career_agent", {
-                "success_probability": career_report.success_probability,
-                "timeline_estimate": career_report.timeline_estimate,
-                "confidence": career_report.confidence_score
-            })
-            
-            state.update_progress(state.progress + 0.2)
-            state.add_debug_log("Career analysis completed successfully")
+            if agent_result.success:
+                state.store_agent_result("salary_benefits", agent_result.result)
+                state.store_agent_output("salary_benefits_agent", {
+                    "analysis_data": agent_result.result,
+                    "confidence": agent_result.confidence_score,
+                    "execution_time": agent_result.execution_time
+                })
+                state.update_progress(state.progress + 0.16)
+                state.add_debug_log("Salary benefits analysis completed")
+            else:
+                state.add_error(f"Salary benefits analysis failed: {agent_result.error_message}")
             
         except Exception as e:
-            state.add_error(f"Career analysis failed: {str(e)}")
+            state.add_error(f"Salary benefits analysis failed: {str(e)}")
+        
+        return state
+
+
+class CareerGrowthNode(WorkflowNode):
+    """커리어 성장 분석 노드"""
+    
+    def __init__(self):
+        super().__init__("career_growth_analysis")
+    
+    async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
+        """커리어 성장 분석 실행"""
+        if state.should_skip_stage("career_growth_analysis"):
+            state.add_debug_log("Skipping career growth analysis")
+            state.update_progress(state.progress + 0.16)
+            return state
+        
+        try:
+            from ..agents.career_growth_agent import CareerGrowthAgent
+            
+            agent = CareerGrowthAgent()
+            state.add_debug_log("Starting career growth analysis")
+            
+            context = {
+                "company_name": state.request.company,
+                "position": state.request.position,
+                "timestamp": datetime.now(),
+                "analysis_type": "comprehensive"
+            }
+            
+            agent_result = await agent.execute(
+                query=state.request.company,
+                context=context,
+                user_profile=state.user_profile
+            )
+            
+            if agent_result.success:
+                state.store_agent_result("career_growth", agent_result.result)
+                state.store_agent_output("career_growth_agent", {
+                    "analysis_data": agent_result.result,
+                    "confidence": agent_result.confidence_score,
+                    "execution_time": agent_result.execution_time
+                })
+                state.update_progress(state.progress + 0.16)
+                state.add_debug_log("Career growth analysis completed")
+            else:
+                state.add_error(f"Career growth analysis failed: {agent_result.error_message}")
+            
+        except Exception as e:
+            state.add_error(f"Career growth analysis failed: {str(e)}")
         
         return state
 
 
 class ParallelAnalysisNode(WorkflowNode):
-    """
-    🚀 병렬 분석 노드 - 여러 분석을 동시에 실행하여 성능 향상
-    
-    💡 병렬 처리의 핵심 개념:
-    - asyncio.gather()로 여러 비동기 작업을 동시 실행
-    - 각 분석이 독립적이므로 병렬 처리 가능
-    - 전체 실행 시간을 대폭 단축
-    
-    🔧 커스터마이징 가이드:
-    1. 새로운 분석 추가:
-       - 새 노드 인스턴스 생성
-       - tasks 리스트에 추가
-       - 결과 병합 로직에 추가
-    
-    2. 병렬 처리 방식 변경:
-       - asyncio.gather() 대신 asyncio.as_completed() 사용
-       - 각 태스크별 타임아웃 설정
-       - 실패한 태스크 재시도 로직 추가
-    
-    3. 결과 병합 커스터마이징:
-       - 새로운 리포트 타입의 병합 로직 추가
-       - 우선순위에 따른 결과 선택
-    """
+    """병렬 분석 노드 - 5개 에이전트를 동시에 실행"""
     
     def __init__(self):
         super().__init__("parallel_analysis")
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """
-        병렬 분석 실행 로직
+        """5개 전문 에이전트 병렬 실행"""
         
-        🔄 처리 순서:
-        1. 개별 분석 노드들 생성
-        2. 실행할 태스크들 준비
-        3. asyncio.gather()로 병렬 실행
-        4. 결과들을 원본 상태에 병합
-        """
+        # 개별 노드 인스턴스 생성
+        nodes = [
+            CompanyCultureNode(),
+            WorkLifeBalanceNode(), 
+            ManagementNode(),
+            SalaryBenefitsNode(),
+            CareerGrowthNode()
+        ]
         
-        # 💡 개별 분석 노드들 생성
-        culture_node = CultureAnalysisNode()
-        compensation_node = CompensationAnalysisNode()
-        growth_node = GrowthAnalysisNode()
-        
-        # 🎯 병렬 실행할 태스크들 준비
+        # 실행할 태스크 준비
         tasks = []
-        
-        if not state.should_skip_stage("culture_analysis"):
-            tasks.append(culture_node._execute_logic(state))
-        
-        if not state.should_skip_stage("compensation_analysis"):
-            tasks.append(compensation_node._execute_logic(state))
-        
-        if not state.should_skip_stage("growth_analysis"):
-            tasks.append(growth_node._execute_logic(state))
+        for node in nodes:
+            if not state.should_skip_stage(node.name):
+                tasks.append(node._execute_logic(state))
         
         if not tasks:
             state.add_warning("No analysis tasks to execute")
             return state
         
         try:
-            # 🚀 핵심: asyncio.gather()로 병렬 실행
             state.add_debug_log(f"Starting parallel execution of {len(tasks)} analysis tasks")
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # 📊 결과 처리 및 병합
+            # 결과 병합
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     state.add_error(f"Parallel task {i} failed: {str(result)}")
                 elif isinstance(result, WorkflowState):
-                    # 💡 상태 병합: 각 분석 결과를 원본 상태에 통합
-                    if result.culture_report:
-                        state.culture_report = result.culture_report
-                    if result.compensation_report:
-                        state.compensation_report = result.compensation_report
-                    if result.growth_report:
-                        state.growth_report = result.growth_report
+                    # 분석 결과 병합
+                    if result.company_culture_result:
+                        state.company_culture_result = result.company_culture_result
+                    if result.work_life_balance_result:
+                        state.work_life_balance_result = result.work_life_balance_result
+                    if result.management_result:
+                        state.management_result = result.management_result
+                    if result.salary_benefits_result:
+                        state.salary_benefits_result = result.salary_benefits_result
+                    if result.career_growth_result:
+                        state.career_growth_result = result.career_growth_result
                     
-                    # 🔧 커스터마이징: 새로운 리포트 타입 추가 시 여기에 병합 로직 추가
-                    # if result.new_report:
-                    #     state.new_report = result.new_report
-                    
-                    # 📈 에이전트 출력 및 로그 병합
+                    # 메타데이터 병합
                     state.agent_outputs.update(result.agent_outputs)
                     state.errors.extend(result.errors)
                     state.warnings.extend(result.warnings)
             
-            # ✅ 진행률 업데이트
-            state.update_progress(0.7)
+            state.update_progress(0.9)
             state.add_debug_log("Parallel analysis execution completed")
             
         except Exception as e:
@@ -425,88 +416,98 @@ class ParallelAnalysisNode(WorkflowNode):
 
 
 class SynthesisNode(WorkflowNode):
-    """Synthesizes results from all analyses."""
+    """결과 종합 노드"""
     
     def __init__(self):
         super().__init__("synthesis")
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """Synthesize analysis results."""
-        
+        """분석 결과 종합"""
         state.add_debug_log("Starting result synthesis")
         
-        # Check available results
-        available_reports = []
-        if state.culture_report:
-            available_reports.append("culture")
-        if state.compensation_report:
-            available_reports.append("compensation")
-        if state.growth_report:
-            available_reports.append("growth")
-        if state.career_report:
-            available_reports.append("career")
+        completed_analyses = state.get_completed_analyses()
         
-        if not available_reports:
+        if not completed_analyses:
             state.add_error("No analysis results available for synthesis")
             return state
         
-        state.add_debug_log(f"Synthesizing results from: {', '.join(available_reports)}")
+        state.add_debug_log(f"Synthesizing results from: {', '.join(completed_analyses)}")
         
-        # Store synthesis metadata
+        # 종합 결과 생성
+        synthesis_result = {
+            "company_name": state.request.company,
+            "position": state.request.position,
+            "completed_analyses": completed_analyses,
+            "analysis_summary": {},
+            "overall_insights": [],
+            "synthesis_timestamp": datetime.now().isoformat()
+        }
+        
+        # 각 분석 결과를 요약에 포함
+        all_results = state.get_all_results()
+        for analysis_type, result in all_results.items():
+            if result:
+                synthesis_result["analysis_summary"][analysis_type] = {
+                    "strengths_count": len(result.get("strengths", {}).get("strengths", [])) if isinstance(result.get("strengths"), dict) else 0,
+                    "weaknesses_count": len(result.get("weaknesses", {}).get("strengths", [])) if isinstance(result.get("weaknesses"), dict) else 0,
+                    "confidence_score": result.get("confidence_score", 0.0)
+                }
+        
+        # 종합 결과 저장
+        state.comprehensive_result = synthesis_result
+        
         state.store_agent_output("synthesis", {
-            "available_reports": available_reports,
-            "synthesis_timestamp": datetime.now().isoformat(),
-            "total_reports": len(available_reports)
+            "completed_analyses": completed_analyses,
+            "total_analyses": len(completed_analyses),
+            "synthesis_timestamp": datetime.now().isoformat()
         })
         
-        state.update_progress(0.85)
+        state.update_progress(0.95)
         state.add_debug_log("Result synthesis completed")
         
         return state
 
 
 class ReportGenerationNode(WorkflowNode):
-    """Generates the final comprehensive report."""
+    """최종 보고서 생성 노드"""
     
     def __init__(self):
         super().__init__("report_generation")
     
     async def _execute_logic(self, state: WorkflowState) -> WorkflowState:
-        """Generate final comprehensive report."""
-        
+        """최종 보고서 생성"""
         state.add_debug_log("Starting final report generation")
         
+        if not state.comprehensive_result:
+            state.add_error("No synthesis result available for report generation")
+            return state
+        
         try:
-            from ..services.report_generator import ReportGenerator
+            # 간단한 보고서 생성 (실제로는 ReportGenerator 사용)
+            final_report = {
+                "company": state.request.company,
+                "position": state.request.position,
+                "analysis_date": datetime.now().isoformat(),
+                "completed_analyses": state.get_completed_analyses(),
+                "results": state.get_all_results(),
+                "performance": state.get_performance_summary(),
+                "overall_recommendation": "분석 완료됨"
+            }
             
-            # Initialize report generator
-            report_generator = ReportGenerator()
-            
-            # Generate comprehensive report
-            final_report = await report_generator.generate_comprehensive_report(
-                culture_report=state.culture_report,
-                compensation_report=state.compensation_report,
-                growth_report=state.growth_report,
-                career_report=state.career_report,
-                user_profile=state.user_profile,
-                company=state.request.company,
-                position=state.request.position
-            )
-            
-            # Store final report
-            state.final_report = final_report
-            
-            # Store report generation metadata
-            state.store_agent_output("report_generator", {
-                "overall_score": final_report.overall_score,
-                "recommendation": final_report.recommendation,
-                "confidence": final_report.overall_confidence,
-                "completeness": final_report.analysis_completeness
+            # 최종 보고서를 comprehensive_result에 업데이트
+            state.comprehensive_result.update({
+                "final_report": final_report,
+                "report_generated_at": datetime.now().isoformat()
             })
             
-            # Mark as complete
+            state.store_agent_output("report_generator", {
+                "report_sections": len(final_report),
+                "total_analyses": len(state.get_completed_analyses()),
+                "generation_timestamp": datetime.now().isoformat()
+            })
+            
             state.update_progress(1.0)
-            state.add_debug_log("Final report generation completed successfully")
+            state.add_debug_log("Final report generation completed")
             
         except Exception as e:
             state.add_error(f"Report generation failed: {str(e)}")
@@ -514,47 +515,43 @@ class ReportGenerationNode(WorkflowNode):
         return state
 
 
-# Node factory functions for easier workflow construction
+# 노드 생성 함수들
 def create_input_validation_node() -> WorkflowNode:
-    """Create input validation node."""
     return InputValidationNode()
 
-def create_culture_analysis_node() -> WorkflowNode:
-    """Create culture analysis node."""
-    return CultureAnalysisNode()
+def create_company_culture_node() -> WorkflowNode:
+    return CompanyCultureNode()
 
-def create_compensation_analysis_node() -> WorkflowNode:
-    """Create compensation analysis node."""
-    return CompensationAnalysisNode()
+def create_work_life_balance_node() -> WorkflowNode:
+    return WorkLifeBalanceNode()
 
-def create_growth_analysis_node() -> WorkflowNode:
-    """Create growth analysis node."""
-    return GrowthAnalysisNode()
+def create_management_node() -> WorkflowNode:
+    return ManagementNode()
 
-def create_career_analysis_node() -> WorkflowNode:
-    """Create career analysis node."""
-    return CareerAnalysisNode()
+def create_salary_benefits_node() -> WorkflowNode:
+    return SalaryBenefitsNode()
+
+def create_career_growth_node() -> WorkflowNode:
+    return CareerGrowthNode()
 
 def create_parallel_analysis_node() -> WorkflowNode:
-    """Create parallel analysis node."""
     return ParallelAnalysisNode()
 
 def create_synthesis_node() -> WorkflowNode:
-    """Create synthesis node."""
     return SynthesisNode()
 
 def create_report_generation_node() -> WorkflowNode:
-    """Create report generation node."""
     return ReportGenerationNode()
 
 
-# Node registry for dynamic node creation
+# 노드 등록 - 동적 생성을 위한 레지스트리
 NODE_REGISTRY = {
     "input_validation": create_input_validation_node,
-    "culture_analysis": create_culture_analysis_node,
-    "compensation_analysis": create_compensation_analysis_node,
-    "growth_analysis": create_growth_analysis_node,
-    "career_analysis": create_career_analysis_node,
+    "company_culture_analysis": create_company_culture_node,
+    "work_life_balance_analysis": create_work_life_balance_node,
+    "management_analysis": create_management_node,
+    "salary_benefits_analysis": create_salary_benefits_node,
+    "career_growth_analysis": create_career_growth_node,
     "parallel_analysis": create_parallel_analysis_node,
     "synthesis": create_synthesis_node,
     "report_generation": create_report_generation_node
@@ -562,7 +559,7 @@ NODE_REGISTRY = {
 
 
 def create_node(node_type: str) -> WorkflowNode:
-    """Create a workflow node by type."""
+    """타입별 워크플로우 노드 생성"""
     if node_type not in NODE_REGISTRY:
         raise ValueError(f"Unknown node type: {node_type}")
     

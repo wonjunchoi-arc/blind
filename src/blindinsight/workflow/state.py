@@ -11,11 +11,11 @@ LangGraph는 상태 기반 워크플로우를 구성하는 프레임워크입니
 3. Node: 상태를 처리하는 개별 함수/클래스
 4. Edge: 노드들 간의 연결과 실행 순서 정의
 
-💡 커스터마이징 포인트:
-- 새로운 분석 타입 추가하려면: 새 Report 필드와 해당 노드 추가
-- 진행률 계산 방식 변경하려면: update_progress 메서드 수정
-- 에러 처리 방식 변경하려면: add_error, add_warning 메서드 수정
+
 """
+
+#state.py
+
 
 import operator
 from datetime import datetime
@@ -23,268 +23,205 @@ from typing import Annotated, Any, Dict, List, Optional, Sequence
 from pydantic import Field
 
 from ..models.base import BaseModel
-from ..models.analysis import (
-    AnalysisRequest, CultureReport, CompensationReport, 
-    GrowthReport, CareerReport, ComprehensiveReport
-)
+from ..models.analysis import AnalysisRequest
 from ..models.user import UserProfile
 
 
 class WorkflowState(BaseModel):
     """
-    🎯 LangGraph 워크플로우의 중앙 상태 클래스
+    전문 에이전트 기반 워크플로우 상태 관리
     
-    모든 노드가 공유하는 상태 객체입니다. 각 노드는 이 객체를 받아서 수정하고 반환합니다.
-    
-    🔄 LangGraph 상태 전이 패턴:
-    Node1(state) -> modified_state -> Node2(modified_state) -> ...
-    
-    📝 커스터마이징 가이드:
-    1. 새 필드 추가하기:
-       new_field: Optional[YourType] = Field(None, description="설명")
-    
-    2. 리스트 필드 추가하기 (여러 노드에서 안전하게 추가):
-       new_list: Annotated[Sequence[YourType], operator.add] = Field(default_factory=list)
-    
-    3. 딕셔너리 필드 추가하기:
-       new_dict: Dict[str, Any] = Field(default_factory=dict)
-    
-    ⚠️ 중요: Annotated[Sequence, operator.add]는 여러 노드에서 동시에 리스트에 추가할 때 사용
+    5개 전문 에이전트에 최적화:
+    - CompanyCultureAgent (company_culture)
+    - WorkLifeBalanceAgent (work_life_balance) 
+    - ManagementAgent (management)
+    - SalaryBenefitsAgent (salary_benefits)
+    - CareerGrowthAgent (career_growth)
     """
     
-    # 📥 입력 파라미터 - 워크플로우 시작 시 설정되는 필수 정보
+    # 입력 파라미터
     request: AnalysisRequest = Field(..., description="원본 분석 요청 정보")
-    user_profile: Optional[UserProfile] = Field(None, description="개인화를 위한 사용자 프로필")
+    user_profile: Optional[UserProfile] = Field(None, description="사용자 프로필")
     
-    # 📊 분석 결과 - 각각의 전문 에이전트에 의해 채워짐
-    # 💡 커스터마이징: 새로운 분석 타입을 추가하려면 여기에 새 Report 필드 추가
-    # 예시: risk_report: Optional[RiskReport] = Field(None, description="리스크 분석 결과")
-    culture_report: Optional[CultureReport] = Field(None, description="기업 문화 분석 결과")
-    compensation_report: Optional[CompensationReport] = Field(None, description="보상 체계 분석 결과") 
-    growth_report: Optional[GrowthReport] = Field(None, description="성장성 분석 결과")
-    career_report: Optional[CareerReport] = Field(None, description="커리어 경로 분석 결과")
-    final_report: Optional[ComprehensiveReport] = Field(None, description="최종 종합 리포트")
+    # 에이전트 분석 결과 - Dict 형태로 표준화
+    company_culture_result: Optional[Dict[str, Any]] = Field(None, description="기업문화 분석 결과")
+    work_life_balance_result: Optional[Dict[str, Any]] = Field(None, description="워라밸 분석 결과") 
+    management_result: Optional[Dict[str, Any]] = Field(None, description="경영진 분석 결과")
+    salary_benefits_result: Optional[Dict[str, Any]] = Field(None, description="연봉/복지 분석 결과")
+    career_growth_result: Optional[Dict[str, Any]] = Field(None, description="커리어 성장 분석 결과")
     
-    # 🎛️ 워크플로우 제어 - LangGraph 실행 상태 관리
-    # 💡 커스터마이징: 진행률 계산을 변경하려면 update_progress() 메서드 수정
-    current_stage: str = Field("initialized", description="현재 실행 중인 노드 이름")
-    completed_stages: List[str] = Field(default_factory=list, description="완료된 워크플로우 단계들")
-    progress: float = Field(0.0, ge=0.0, le=1.0, description="전체 진행률 (0.0-1.0)")
+    # 최종 종합 결과
+    comprehensive_result: Optional[Dict[str, Any]] = Field(None, description="종합 분석 결과")
     
-    # 🚨 에러 처리 및 로깅 - operator.add 패턴으로 여러 노드에서 안전하게 추가
-    # ⚠️ 중요: Annotated[Sequence[str], operator.add]는 병렬 노드에서도 안전하게 리스트에 추가
-    # 💡 커스터마이징: 새로운 로그 타입을 추가하려면 비슷한 패턴으로 필드 추가
-    # 예시: performance_logs: Annotated[Sequence[str], operator.add] = Field(default_factory=list)
+    # 워크플로우 제어
+    current_stage: str = Field("initialized", description="현재 실행 단계")
+    completed_stages: List[str] = Field(default_factory=list, description="완료된 단계들")
+    progress: float = Field(0.0, ge=0.0, le=1.0, description="진행률")
+    
+    # 에러 및 로깅 - LangGraph 병렬 처리 안전
     errors: Annotated[Sequence[str], operator.add] = Field(default_factory=list)
     warnings: Annotated[Sequence[str], operator.add] = Field(default_factory=list)
     debug_logs: Annotated[Sequence[str], operator.add] = Field(default_factory=list)
     
-    # Data and cache management
-    retrieved_documents: Dict[str, List[Dict[str, Any]]] = Field(
-        default_factory=dict,
-        description="RAG retrieved documents by category"
-    )
-    external_data: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="External data from MCP services"
-    )
-    agent_outputs: Dict[str, Dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Raw outputs from individual agents"
-    )
+    # 에이전트 실행 정보
+    agent_outputs: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="에이전트별 상세 출력")
+    stage_timings: Dict[str, float] = Field(default_factory=dict, description="단계별 실행 시간")
     
-    # Performance metrics
-    stage_timings: Dict[str, float] = Field(
-        default_factory=dict,
-        description="Execution time for each stage in seconds"
-    )
-    api_call_counts: Dict[str, int] = Field(
-        default_factory=dict,
-        description="API call counts by service"
-    )
-    token_usage: Dict[str, int] = Field(
-        default_factory=dict,
-        description="Token usage by model/service"
-    )
-    
-    # Workflow metadata
-    workflow_id: str = Field(..., description="Unique workflow execution identifier")
+    # 워크플로우 메타데이터
+    workflow_id: str = Field(..., description="워크플로우 고유 ID")
     started_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
-    estimated_completion: Optional[datetime] = None
     
-    # Configuration and flags
-    skip_stages: List[str] = Field(default_factory=list, description="Stages to skip")
-    force_refresh: bool = Field(False, description="Force refresh of cached data")
-    debug_mode: bool = Field(False, description="Enable debug mode")
+    # 설정 플래그
+    skip_stages: List[str] = Field(default_factory=list, description="건너뛸 단계들")
+    debug_mode: bool = Field(False, description="디버그 모드")
     
     class Config:
-        """Pydantic configuration."""
         arbitrary_types_allowed = True
         validate_assignment = True
     
+    # 에러 및 로깅 메서드
     def add_error(self, error: str, stage: Optional[str] = None) -> None:
-        """Add an error to the workflow state."""
+        """에러 추가"""
         error_msg = f"[{stage or self.current_stage}] {error}"
-        # Note: Direct list modification works with Annotated[Sequence, operator.add]
         self.errors.append(error_msg)
         self.updated_at = datetime.now()
     
     def add_warning(self, warning: str, stage: Optional[str] = None) -> None:
-        """Add a warning to the workflow state."""
+        """경고 추가"""
         warning_msg = f"[{stage or self.current_stage}] {warning}"
         self.warnings.append(warning_msg)
         self.updated_at = datetime.now()
     
     def add_debug_log(self, message: str, stage: Optional[str] = None) -> None:
-        """Add a debug log entry."""
+        """디버그 로그 추가"""
         if self.debug_mode:
             log_msg = f"[{stage or self.current_stage}] {message}"
             self.debug_logs.append(log_msg)
     
+    # 진행 상태 관리
     def update_stage(self, new_stage: str) -> None:
-        """Update the current workflow stage."""
+        """현재 단계 업데이트"""
         if self.current_stage != "initialized":
             self.completed_stages.append(self.current_stage)
         self.current_stage = new_stage
         self.updated_at = datetime.now()
     
     def update_progress(self, progress: float) -> None:
-        """Update the workflow progress."""
+        """진행률 업데이트"""
         self.progress = max(0.0, min(1.0, progress))
         self.updated_at = datetime.now()
     
     def record_stage_timing(self, stage: str, duration: float) -> None:
-        """Record the execution time for a workflow stage."""
+        """단계별 실행 시간 기록"""
         self.stage_timings[stage] = duration
     
-    def increment_api_calls(self, service: str, count: int = 1) -> None:
-        """Increment API call count for a service."""
-        self.api_call_counts[service] = self.api_call_counts.get(service, 0) + count
-    
-    def add_token_usage(self, model: str, tokens: int) -> None:
-        """Add token usage for a model."""
-        self.token_usage[model] = self.token_usage.get(model, 0) + tokens
-    
-    def store_retrieved_documents(self, category: str, documents: List[Dict[str, Any]]) -> None:
-        """Store retrieved documents for a category."""
-        self.retrieved_documents[category] = documents
-        self.add_debug_log(f"Stored {len(documents)} documents for category: {category}")
-    
-    def store_external_data(self, source: str, data: Any) -> None:
-        """Store external data from MCP services."""
-        self.external_data[source] = data
-        self.add_debug_log(f"Stored external data from source: {source}")
+    # 에이전트 결과 저장
+    def store_agent_result(self, agent_type: str, result: Dict[str, Any]) -> None:
+        """에이전트 결과 저장"""
+        if agent_type == "company_culture":
+            self.company_culture_result = result
+        elif agent_type == "work_life_balance":
+            self.work_life_balance_result = result
+        elif agent_type == "management":
+            self.management_result = result
+        elif agent_type == "salary_benefits":
+            self.salary_benefits_result = result
+        elif agent_type == "career_growth":
+            self.career_growth_result = result
+        
+        self.add_debug_log(f"Stored result for {agent_type} agent")
     
     def store_agent_output(self, agent_name: str, output: Dict[str, Any]) -> None:
-        """Store raw output from an agent."""
+        """에이전트 상세 출력 저장"""
         self.agent_outputs[agent_name] = output
-        self.add_debug_log(f"Stored output from agent: {agent_name}")
+        self.add_debug_log(f"Stored output from {agent_name}")
     
+    # 상태 확인 메서드
     def has_errors(self) -> bool:
-        """Check if the workflow has any errors."""
+        """에러 존재 여부 확인"""
         return len(self.errors) > 0
     
-    def get_completion_estimate(self) -> Optional[datetime]:
-        """Get estimated completion time based on current progress."""
-        if self.progress > 0 and self.started_at:
-            elapsed = (datetime.now() - self.started_at).total_seconds()
-            estimated_total = elapsed / self.progress
-            return self.started_at + datetime.timedelta(seconds=estimated_total)
-        return None
-    
-    def get_performance_summary(self) -> Dict[str, Any]:
-        """Get a summary of workflow performance metrics."""
-        total_execution_time = sum(self.stage_timings.values())
-        total_api_calls = sum(self.api_call_counts.values())
-        total_tokens = sum(self.token_usage.values())
-        
-        return {
-            "total_execution_time": total_execution_time,
-            "total_api_calls": total_api_calls,
-            "total_tokens": total_tokens,
-            "stage_timings": self.stage_timings,
-            "api_calls_by_service": self.api_call_counts,
-            "tokens_by_model": self.token_usage,
-            "error_count": len(self.errors),
-            "warning_count": len(self.warnings)
-        }
-    
     def is_stage_completed(self, stage: str) -> bool:
-        """Check if a specific stage has been completed."""
+        """특정 단계 완료 여부 확인"""
         return stage in self.completed_stages
     
     def should_skip_stage(self, stage: str) -> bool:
-        """Check if a stage should be skipped."""
+        """단계 건너뛰기 여부 확인"""
         return stage in self.skip_stages
     
-    def get_analysis_results(self) -> Dict[str, Any]:
-        """Get all available analysis results."""
+    # 결과 조회 메서드
+    def get_all_results(self) -> Dict[str, Any]:
+        """모든 분석 결과 반환"""
         results = {}
         
-        if self.culture_report:
-            results["culture"] = self.culture_report.dict()
-        if self.compensation_report:
-            results["compensation"] = self.compensation_report.dict()
-        if self.growth_report:
-            results["growth"] = self.growth_report.dict()
-        if self.career_report:
-            results["career"] = self.career_report.dict()
-        if self.final_report:
-            results["comprehensive"] = self.final_report.dict()
-        
+        if self.company_culture_result:
+            results["company_culture"] = self.company_culture_result
+        if self.work_life_balance_result:
+            results["work_life_balance"] = self.work_life_balance_result
+        if self.management_result:
+            results["management"] = self.management_result
+        if self.salary_benefits_result:
+            results["salary_benefits"] = self.salary_benefits_result
+        if self.career_growth_result:
+            results["career_growth"] = self.career_growth_result
+        if self.comprehensive_result:
+            results["comprehensive"] = self.comprehensive_result
+            
         return results
     
-    def validate_state(self) -> bool:
-        """Validate the current workflow state."""
-        # Check required fields
-        if not self.request:
-            self.add_error("Missing analysis request")
-            return False
-        
-        if not self.workflow_id:
-            self.add_error("Missing workflow ID")
-            return False
-        
-        # Check progress consistency
-        if self.progress < 0 or self.progress > 1:
-            self.add_error(f"Invalid progress value: {self.progress}")
-            return False
-        
-        # Check if final report exists when progress is complete
-        if self.progress >= 1.0 and not self.final_report:
-            self.add_warning("Progress indicates completion but no final report available")
-        
-        return not self.has_errors()
+    def get_completed_analyses(self) -> List[str]:
+        """완료된 분석 타입 목록 반환"""
+        completed = []
+        if self.company_culture_result:
+            completed.append("company_culture")
+        if self.work_life_balance_result:
+            completed.append("work_life_balance")
+        if self.management_result:
+            completed.append("management")
+        if self.salary_benefits_result:
+            completed.append("salary_benefits")
+        if self.career_growth_result:
+            completed.append("career_growth")
+        return completed
+    
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """성능 요약 정보 반환"""
+        return {
+            "total_execution_time": sum(self.stage_timings.values()),
+            "stage_timings": self.stage_timings,
+            "error_count": len(self.errors),
+            "warning_count": len(self.warnings),
+            "completed_analyses": self.get_completed_analyses(),
+            "progress": self.progress
+        }
 
 
 class WorkflowConfig(BaseModel):
-    """Configuration for workflow execution."""
+    """워크플로우 실행 설정"""
     
-    # Execution settings
-    max_execution_time: int = Field(120, description="Maximum execution time in seconds")
-    enable_parallel_execution: bool = Field(True, description="Enable parallel agent execution")
-    max_retries: int = Field(3, description="Maximum retries for failed stages")
+    # 실행 설정
+    max_execution_time: int = Field(120, description="최대 실행 시간(초)")
+    enable_parallel_execution: bool = Field(True, description="병렬 실행 활성화")
+    max_retries: int = Field(3, description="최대 재시도 횟수")
     
-    # Quality settings
-    min_confidence_threshold: float = Field(0.7, description="Minimum confidence threshold")
-    require_all_analyses: bool = Field(False, description="Require all analysis types to complete")
+    # 품질 설정
+    min_confidence_threshold: float = Field(0.6, description="최소 신뢰도 임계값")
     
-    # Performance settings
-    enable_caching: bool = Field(True, description="Enable result caching")
-    cache_ttl: int = Field(3600, description="Cache TTL in seconds")
+    # 성능 설정
+    enable_caching: bool = Field(True, description="결과 캐싱 활성화")
+    cache_ttl: int = Field(3600, description="캐시 TTL(초)")
     
-    # Debug settings
-    enable_debug_logging: bool = Field(False, description="Enable debug logging")
-    save_intermediate_results: bool = Field(False, description="Save intermediate results")
+    # 디버그 설정
+    enable_debug_logging: bool = Field(False, description="디버그 로깅 활성화")
     
     class Config:
-        """Pydantic configuration."""
         schema_extra = {
             "example": {
                 "max_execution_time": 120,
                 "enable_parallel_execution": True,
-                "min_confidence_threshold": 0.7,
-                "enable_caching": True
+                "min_confidence_threshold": 0.6,
+                "enable_caching": True,
+                "enable_debug_logging": False
             }
         }

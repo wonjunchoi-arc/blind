@@ -29,6 +29,15 @@ StateGraph는 LangGraph의 핵심으로, 노드들 간의 연결과 실행 순�
    - MemorySaver로 중간 상태 저장
    - 실패 시 중단 지점부터 재시작 가능
 """
+#graph.py
+"""
+LangGraph 워크플로우 - 에이전트 구조 최적화
+
+5개 전문 에이전트에 맞춘 워크플로우:
+- CompanyCultureAgent, WorkLifeBalanceAgent, ManagementAgent, SalaryBenefitsAgent, CareerGrowthAgent
+- 순차 실행과 병렬 실행 모드 지원
+- 불필요한 복잡성 제거 및 성능 최적화
+"""
 
 import uuid
 from datetime import datetime
@@ -41,42 +50,29 @@ from ..models.analysis import AnalysisRequest
 from ..models.user import UserProfile
 from .state import WorkflowState, WorkflowConfig
 from .nodes import (
-    InputValidationNode, CultureAnalysisNode, CompensationAnalysisNode,
-    GrowthAnalysisNode, CareerAnalysisNode, ParallelAnalysisNode,
-    SynthesisNode, ReportGenerationNode
+    InputValidationNode,
+    CompanyCultureNode,
+    WorkLifeBalanceNode,
+    ManagementNode,
+    SalaryBenefitsNode,
+    CareerGrowthNode,
+    ParallelAnalysisNode,
+    SynthesisNode,
+    ReportGenerationNode
 )
 
 
 class BlindInsightWorkflow:
     """
-    🎯 BlindInsight AI 분석 시스템의 메인 워크플로우 오케스트레이터
+    BlindInsight AI 분석 워크플로우 오케스트레이터
     
-    LangGraph 기반 워크플로우를 관리하여 여러 AI 에이전트를 조율하고
-    종합적인 기업 분석을 수행합니다.
-    
-    🏗️ 워크플로우 아키텍처:
+    5개 전문 에이전트를 조율하여 종합적인 기업 분석 수행:
     
     순차 실행 모드:
-    input_validation → culture_analysis → compensation_analysis → growth_analysis → career_analysis → synthesis → report_generation
+    input_validation → company_culture → work_life_balance → management → salary_benefits → career_growth → synthesis → report_generation
     
     병렬 실행 모드:
-    input_validation → parallel_analysis (culture + compensation + growth 동시 실행) → career_analysis → synthesis → report_generation
-    
-    🔧 커스터마이징 가이드:
-    1. 새로운 분석 타입 추가:
-       - 새 노드 래퍼 메서드 추가 (_your_analysis_wrapper)
-       - _build_workflow()에서 노드 추가
-       - _define_workflow_edges()에서 연결 정의
-    
-    2. 실행 모드 변경:
-       - WorkflowConfig의 enable_parallel_execution으로 제어
-       - 병렬 모드: 독립적인 분석들을 동시 실행하여 속도 향상
-       - 순차 모드: 단계별 순서 실행으로 디버깅 용이
-    
-    3. 체크포인팅 활용:
-       - thread_id로 세션 관리
-       - 실패 시 중간부터 재시작 가능
-       - 진행 상황 추적 및 복구
+    input_validation → parallel_analysis (5개 에이전트 동시 실행) → synthesis → report_generation
     """
     
     def __init__(self, config: Optional[WorkflowConfig] = None):
@@ -86,129 +82,98 @@ class BlindInsightWorkflow:
         self._build_workflow()
     
     def _build_workflow(self) -> None:
-        """
-        🏗️ LangGraph 워크플로우 구성 - 핵심 메서드
-        
-        🔄 구성 순서:
-        1. StateGraph 생성 (상태 클래스 지정)
-        2. 노드들 추가 (각각 함수로 등록)
-        3. 엣지들 정의 (노드 간 연결)
-        4. 진입점 설정 (시작 노드)
-        5. 컴파일 (실행 가능한 그래프로 변환)
-        
-        💡 커스터마이징 포인트:
-        - 새 노드 추가: workflow.add_node("name", wrapper_function)
-        - 실행 모드: config.enable_parallel_execution으로 제어
-        """
-        
-        # 1️⃣ 워크플로우 그래프 생성 (상태 클래스 지정)
+        """LangGraph 워크플로우 구성"""
         workflow = StateGraph(WorkflowState)
         
-        # 2️⃣ 노드들 추가 - 각 노드는 비동기 함수로 등록
+        # 노드 추가
         workflow.add_node("input_validation", self._input_validation_wrapper)
         
-        # 💡 실행 모드에 따른 노드 구성
         if self.config.enable_parallel_execution:
-            # 🚀 병렬 실행: culture, compensation, growth를 한 번에
+            # 병렬 실행: 5개 에이전트를 한 번에
             workflow.add_node("parallel_analysis", self._parallel_analysis_wrapper)
         else:
-            # 🔄 순차 실행: 각 분석을 단계적으로
-            workflow.add_node("culture_analysis", self._culture_analysis_wrapper)
-            workflow.add_node("compensation_analysis", self._compensation_analysis_wrapper)
-            workflow.add_node("growth_analysis", self._growth_analysis_wrapper)
+            # 순차 실행: 각 에이전트를 단계적으로
+            workflow.add_node("company_culture_analysis", self._company_culture_wrapper)
+            workflow.add_node("work_life_balance_analysis", self._work_life_balance_wrapper)
+            workflow.add_node("management_analysis", self._management_wrapper)
+            workflow.add_node("salary_benefits_analysis", self._salary_benefits_wrapper)
+            workflow.add_node("career_growth_analysis", self._career_growth_wrapper)
         
-        # 🎯 공통 노드들 (실행 모드와 무관)
-        workflow.add_node("career_analysis", self._career_analysis_wrapper)
+        # 공통 노드들
         workflow.add_node("synthesis", self._synthesis_wrapper)
         workflow.add_node("report_generation", self._report_generation_wrapper)
         
-        # 🔧 커스터마이징: 새 노드 추가 예시
-        # workflow.add_node("risk_analysis", self._risk_analysis_wrapper)
-        
-        # 3️⃣ 워크플로우 연결 정의 (실행 모드에 따라 다름)
+        # 워크플로우 연결 정의
         self._define_workflow_edges(workflow)
         
-        # 4️⃣ 진입점 설정 (첫 번째로 실행될 노드)
+        # 진입점 설정
         workflow.set_entry_point("input_validation")
         
-        # 5️⃣ 컴파일 - 실행 가능한 워크플로우로 변환 (체크포인팅 포함)
+        # 컴파일
         self.workflow_graph = workflow.compile(checkpointer=self.checkpointer)
     
     def _define_workflow_edges(self, workflow: StateGraph) -> None:
-        """
-        🔗 워크플로우 엣지(연결) 정의 - 노드 간 실행 순서 결정
-        
-        🔧 커스터마이징 가이드:
-        1. 새 노드 삽입: 기존 엣지 제거 후 새 엣지 추가
-           예: A -> C 사이에 B 삽입
-           기존: workflow.add_edge(A, C)
-           변경: workflow.add_edge(A, B) + workflow.add_edge(B, C)
-        
-        2. 조건부 분기: 조건에 따라 다른 노드로 연결
-        3. 병렬 vs 순차: 설정에 따라 다른 흐름 구성
-        """
-        
+        """워크플로우 엣지 정의"""
         if self.config.enable_parallel_execution:
-            # 🚀 병렬 실행 흐름
-            # input_validation → parallel_analysis → career_analysis → synthesis → report_generation → END
+            # 병렬 실행 흐름
             workflow.add_edge("input_validation", "parallel_analysis")
-            workflow.add_edge("parallel_analysis", "career_analysis")
+            workflow.add_edge("parallel_analysis", "synthesis")
         else:
-            # 🔄 순차 실행 흐름
-            # input_validation → culture → compensation → growth → career_analysis → synthesis → report_generation → END
-            workflow.add_edge("input_validation", "culture_analysis")
-            workflow.add_edge("culture_analysis", "compensation_analysis")
-            workflow.add_edge("compensation_analysis", "growth_analysis")
-            workflow.add_edge("growth_analysis", "career_analysis")
+            # 순차 실행 흐름
+            workflow.add_edge("input_validation", "company_culture_analysis")
+            workflow.add_edge("company_culture_analysis", "work_life_balance_analysis")
+            workflow.add_edge("work_life_balance_analysis", "management_analysis")
+            workflow.add_edge("management_analysis", "salary_benefits_analysis")
+            workflow.add_edge("salary_benefits_analysis", "career_growth_analysis")
+            workflow.add_edge("career_growth_analysis", "synthesis")
         
-        # 📊 공통 흐름 (실행 모드와 무관)
-        workflow.add_edge("career_analysis", "synthesis")
+        # 공통 흐름
         workflow.add_edge("synthesis", "report_generation")
         workflow.add_edge("report_generation", END)
-        
-        # 🔧 커스터마이징: 새 노드 연결 예시
-        # 리스크 분석을 synthesis 전에 추가하는 경우:
-        # workflow.add_edge("career_analysis", "risk_analysis")
-        # workflow.add_edge("risk_analysis", "synthesis")
     
-    # Node wrapper methods for LangGraph integration
+    # 노드 래퍼 메서드들
     async def _input_validation_wrapper(self, state: WorkflowState) -> WorkflowState:
-        """Wrapper for input validation node."""
+        """입력 검증 노드 래퍼"""
         node = InputValidationNode()
         return await node.execute(state)
     
-    async def _culture_analysis_wrapper(self, state: WorkflowState) -> WorkflowState:
-        """Wrapper for culture analysis node."""
-        node = CultureAnalysisNode()
+    async def _company_culture_wrapper(self, state: WorkflowState) -> WorkflowState:
+        """기업문화 분석 노드 래퍼"""
+        node = CompanyCultureNode()
         return await node.execute(state)
     
-    async def _compensation_analysis_wrapper(self, state: WorkflowState) -> WorkflowState:
-        """Wrapper for compensation analysis node."""
-        node = CompensationAnalysisNode()
+    async def _work_life_balance_wrapper(self, state: WorkflowState) -> WorkflowState:
+        """워라밸 분석 노드 래퍼"""
+        node = WorkLifeBalanceNode()
         return await node.execute(state)
     
-    async def _growth_analysis_wrapper(self, state: WorkflowState) -> WorkflowState:
-        """Wrapper for growth analysis node."""
-        node = GrowthAnalysisNode()
+    async def _management_wrapper(self, state: WorkflowState) -> WorkflowState:
+        """경영진 분석 노드 래퍼"""
+        node = ManagementNode()
         return await node.execute(state)
     
-    async def _career_analysis_wrapper(self, state: WorkflowState) -> WorkflowState:
-        """Wrapper for career analysis node."""
-        node = CareerAnalysisNode()
+    async def _salary_benefits_wrapper(self, state: WorkflowState) -> WorkflowState:
+        """연봉/복지 분석 노드 래퍼"""
+        node = SalaryBenefitsNode()
+        return await node.execute(state)
+    
+    async def _career_growth_wrapper(self, state: WorkflowState) -> WorkflowState:
+        """커리어 성장 분석 노드 래퍼"""
+        node = CareerGrowthNode()
         return await node.execute(state)
     
     async def _parallel_analysis_wrapper(self, state: WorkflowState) -> WorkflowState:
-        """Wrapper for parallel analysis node."""
+        """병렬 분석 노드 래퍼"""
         node = ParallelAnalysisNode()
         return await node.execute(state)
     
     async def _synthesis_wrapper(self, state: WorkflowState) -> WorkflowState:
-        """Wrapper for synthesis node."""
+        """결과 종합 노드 래퍼"""
         node = SynthesisNode()
         return await node.execute(state)
     
     async def _report_generation_wrapper(self, state: WorkflowState) -> WorkflowState:
-        """Wrapper for report generation node."""
+        """보고서 생성 노드 래퍼"""
         node = ReportGenerationNode()
         return await node.execute(state)
     
@@ -218,18 +183,14 @@ class BlindInsightWorkflow:
         user_profile: Optional[UserProfile] = None,
         thread_id: Optional[str] = None
     ) -> WorkflowState:
-        """
-        기업 분석 워크플로우 실행하기
-        - 사용자 요청을 받아서 전체 분석 과정을 진행
-        - 최종 분석 결과를 담은 상태 객체 반환
-        """
+        """기업 분석 워크플로우 실행"""
         
-        # Generate unique workflow ID and thread ID
+        # 워크플로우 ID 및 스레드 ID 생성
         workflow_id = str(uuid.uuid4())
         if not thread_id:
             thread_id = f"analysis_{workflow_id}"
         
-        # Initialize workflow state
+        # 초기 상태 설정
         initial_state = WorkflowState(
             request=request,
             user_profile=user_profile,
@@ -237,28 +198,28 @@ class BlindInsightWorkflow:
             debug_mode=self.config.enable_debug_logging
         )
         
-        # Configure checkpointing
+        # 체크포인팅 설정
         config = {"configurable": {"thread_id": thread_id}}
         
         try:
-            # Execute workflow
+            # 워크플로우 실행
             result = await self.workflow_graph.ainvoke(
                 initial_state.dict(),
                 config=config
             )
             
-            # Convert result back to WorkflowState
+            # 결과를 WorkflowState로 변환
             final_state = WorkflowState(**result)
             
             return final_state
             
         except Exception as e:
-            # Handle workflow execution errors
+            # 워크플로우 실행 오류 처리
             initial_state.add_error(f"Workflow execution failed: {str(e)}")
             return initial_state
     
     async def get_workflow_state(self, thread_id: str) -> Optional[WorkflowState]:
-        """Get current workflow state by thread ID."""
+        """스레드 ID로 현재 워크플로우 상태 조회"""
         try:
             config = {"configurable": {"thread_id": thread_id}}
             checkpoints = self.checkpointer.list(config)
@@ -273,7 +234,7 @@ class BlindInsightWorkflow:
             return None
     
     def get_workflow_history(self, thread_id: str) -> List[Dict]:
-        """Get workflow execution history."""
+        """워크플로우 실행 히스토리 조회"""
         try:
             config = {"configurable": {"thread_id": thread_id}}
             return list(self.checkpointer.list(config))
@@ -282,11 +243,7 @@ class BlindInsightWorkflow:
 
 
 class AnalysisWorkflow:
-    """
-    분석 워크플로우 간편 인터페이스
-    - BlindInsightWorkflow를 더 쉽게 사용할 수 있도록 래핑
-    - 복잡한 LangGraph 설정을 숨기고 단순한 인터페이스 제공
-    """
+    """간편 분석 워크플로우 인터페이스"""
     
     def __init__(self, config: Optional[WorkflowConfig] = None):
         self.workflow = BlindInsightWorkflow(config)
@@ -298,31 +255,27 @@ class AnalysisWorkflow:
         user_profile: Optional[UserProfile] = None,
         analysis_type: str = "comprehensive"
     ) -> Dict:
-        """
-        기업 분석 실행하기 (간편 버전)
-        - 단순한 파라미터로 분석 실행
-        - 결과를 딕셔너리 형태로 반환
-        """
+        """기업 분석 실행 (간편 버전)"""
         
-        # Create analysis request
+        # 분석 요청 생성
         request = AnalysisRequest(
             company=company,
             position=position,
             analysis_type=analysis_type
         )
         
-        # Execute workflow
+        # 워크플로우 실행
         result_state = await self.workflow.analyze_company(
             request=request,
             user_profile=user_profile
         )
         
-        # Return formatted results
+        # 포맷된 결과 반환
         return {
             "success": not result_state.has_errors(),
             "workflow_id": result_state.workflow_id,
             "progress": result_state.progress,
-            "results": result_state.get_analysis_results(),
+            "results": result_state.get_all_results(),
             "errors": list(result_state.errors),
             "warnings": list(result_state.warnings),
             "performance": result_state.get_performance_summary(),
@@ -330,16 +283,13 @@ class AnalysisWorkflow:
         }
 
 
+# 워크플로우 생성 유틸리티 함수들
 def create_analysis_workflow(
     enable_parallel: bool = True,
     enable_caching: bool = True,
     debug_mode: bool = False
 ) -> BlindInsightWorkflow:
-    """
-   설정이 적용된 분석 워크플로우 생성하기
-    - 사용자가 원하는 옵션으로 워크플로우 구성
-    """
-    
+    """설정이 적용된 분석 워크플로우 생성"""
     config = WorkflowConfig(
         enable_parallel_execution=enable_parallel,
         enable_caching=enable_caching,
@@ -350,21 +300,16 @@ def create_analysis_workflow(
 
 
 def create_simple_workflow() -> AnalysisWorkflow:
-    """기본 설정으로 간편 워크플로우 생성하기"""
+    """기본 설정으로 간편 워크플로우 생성"""
     return AnalysisWorkflow()
 
 
-# Workflow execution utilities
+# 빠른 실행 유틸리티 함수들
 async def execute_quick_analysis(
     company: str,
     position: Optional[str] = None
 ) -> Dict:
-    """
-   빠른 기업 분석 실행하기
-    - 최소한의 설정으로 즉시 분석 시작
-    - 회사명만 입력하면 바로 실행 가능
-    """
-    
+    """빠른 기업 분석 실행"""
     workflow = create_simple_workflow()
     return await workflow.analyze(
         company=company,
@@ -378,16 +323,49 @@ async def execute_personalized_analysis(
     position: str,
     user_profile: UserProfile
 ) -> Dict:
-    """
-    개인화된 기업 분석 실행하기
-    - 사용자 프로필을 활용한 맞춤형 분석
-    - 개인의 특성에 맞는 분석 결과 제공
-    """
-    
+    """개인화된 기업 분석 실행"""
     workflow = create_simple_workflow()
     return await workflow.analyze(
         company=company,
         position=position,
         user_profile=user_profile,
+        analysis_type="comprehensive"
+    )
+
+
+async def execute_parallel_analysis(
+    company: str,
+    position: Optional[str] = None,
+    debug_mode: bool = False
+) -> Dict:
+    """병렬 처리 기업 분석 실행"""
+    config = WorkflowConfig(
+        enable_parallel_execution=True,
+        enable_debug_logging=debug_mode
+    )
+    workflow = AnalysisWorkflow(config)
+    
+    return await workflow.analyze(
+        company=company,
+        position=position,
+        analysis_type="comprehensive"
+    )
+
+
+async def execute_sequential_analysis(
+    company: str,
+    position: Optional[str] = None,
+    debug_mode: bool = False
+) -> Dict:
+    """순차 처리 기업 분석 실행"""
+    config = WorkflowConfig(
+        enable_parallel_execution=False,
+        enable_debug_logging=debug_mode
+    )
+    workflow = AnalysisWorkflow(config)
+    
+    return await workflow.analyze(
+        company=company,
+        position=position,
         analysis_type="comprehensive"
     )

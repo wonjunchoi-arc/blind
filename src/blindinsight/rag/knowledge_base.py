@@ -16,7 +16,7 @@ import logging
 
 from .embeddings import EmbeddingManager, VectorStore, DocumentEmbedding
 from .document_processor import DocumentProcessor, ChunkMetadata
-from .json_processor import ReviewDataProcessor, ReviewDataLoader
+from .json_processor import ChunkDataProcessor, ChunkDataLoader
 from .retriever import RAGRetriever, SearchResult
 from ..models.base import settings
 from ..models.company import BlindPost, CompanyReview, SalaryInfo
@@ -77,8 +77,9 @@ class QueryEngine:
             "면접": ["면접", "채용", "입사", "지원", "선발"]
         }
     
-    def _optimize_query(self, query: str) -> str:
+    def _optimize_query(self, query: str) -> str: 
         """
+         수정방안 -> 현재 너무 하드한 상태 이를 ai를 통해 처리한다면 훨씬더 유연하고 좋은 성과가 날듯 
         쿼리 최적화
         
         Args:
@@ -175,7 +176,7 @@ class QueryEngine:
         }
         
         # 카테고리별 대표 문서 조회
-        categories = ["culture_reviews", "salary_discussions", "career_advice", "interview_reviews"]
+        categories = ["company_culture", "work_life_balance", "management", "salary_benefits", "career_growth", "general"]
         
         for category in categories:
             results = await self.retriever.search(
@@ -210,22 +211,24 @@ class KnowledgeBase:
     문서 처리, 벡터 임베딩, 검색, 인덱싱을 포함합니다.
     """
     
-    def __init__(self, data_dir: str = None):
+    def __init__(self, data_dir: str = None, vector_db_path: str = None):
         """
         지식 베이스 초기화
         
         Args:
             data_dir: 데이터 저장 디렉토리
+            vector_db_path: 벡터 데이터베이스 저장 경로
         """
         self.data_dir = Path(data_dir or settings.data_directory)
+        self.vector_db_path = vector_db_path or settings.vector_db_path
         self.index_file = self.data_dir / "document_index.json"
         
         # 구성 요소 초기화
         self.embedding_manager = EmbeddingManager()
-        self.vector_store = VectorStore()
+        self.vector_store = VectorStore(persist_directory=self.vector_db_path)
         self.document_processor = DocumentProcessor()
-        self.review_processor = ReviewDataProcessor()
-        self.retriever = RAGRetriever(self.vector_store)
+        self.chunk_processor = ChunkDataProcessor()
+        self.retriever = RAGRetriever(self.vector_store, keyword_threshold=0.005)
         self.query_engine = QueryEngine(self.retriever)
         
         # 문서 인덱스 로드
@@ -255,6 +258,32 @@ class KnowledgeBase:
                 
             except Exception as e:
                 logger.error(f"인덱스 로드 실패: {str(e)}")
+    
+    async def initialize(self):
+        """
+        지식베이스 초기화
+        
+        벡터 스토어와 모든 구성 요소를 초기화합니다.
+        """
+        try:
+            logger.info("지식베이스 초기화 중...")
+            
+            # 디렉토리 생성
+            os.makedirs(self.vector_db_path, exist_ok=True)
+            os.makedirs(self.data_dir, exist_ok=True)
+            
+            # 벡터 스토어 및 컬렉션 초기화 확인
+            if hasattr(self.vector_store, '_collections'):
+                logger.info(f"벡터 스토어 컬렉션 수: {len(self.vector_store._collections)}")
+            
+            # 통계 확인
+            stats = self.get_statistics()
+            total_docs = stats.get("knowledge_base", {}).get("total_documents", 0)
+            logger.info(f"지식베이스 초기화 완료 - 총 문서 수: {total_docs}")
+            
+        except Exception as e:
+            logger.error(f"지식베이스 초기화 실패: {str(e)}")
+            raise
     
     def _save_index(self):
         """문서 인덱스 저장"""
@@ -424,43 +453,43 @@ class KnowledgeBase:
             logger.error(f"검색 중 오류 발생: {str(e)}")
             return []
     
-    async def load_review_data(
+    async def load_chunk_data(
         self, 
-        reviews_dir: str = "tools/data/reviews",
+        data_dir: str = "tools/data",
         company_filter: Optional[List[str]] = None
     ) -> bool:
         """
-        JSON 리뷰 데이터를 지식 베이스에 로드
+        JSON 청크 데이터를 지식 베이스에 로드
         
         Args:
-            reviews_dir: 리뷰 JSON 파일들이 있는 디렉토리
+            data_dir: 청크 JSON 파일들이 있는 디렉토리
             company_filter: 로드할 회사 리스트 (None이면 모든 회사)
             
         Returns:
             성공 여부
         """
         try:
-            logger.info(f"JSON 리뷰 데이터 로드 시작: {reviews_dir}")
+            logger.info(f"JSON 청크 데이터 로드 시작: {data_dir}")
             
-            # ReviewDataLoader를 통해 데이터 로드
-            review_loader = ReviewDataLoader(reviews_dir)
-            success = await review_loader.load_all_reviews(company_filter)
+            # ChunkDataLoader를 통해 데이터 로드
+            chunk_loader = ChunkDataLoader(data_dir)
+            success = await chunk_loader.load_all_chunks(company_filter)
             
             if success:
                 # 통계 업데이트
-                stats = review_loader.get_stats()
+                stats = chunk_loader.get_stats()
                 self.performance_stats["documents_processed"] += stats["documents_created"]
                 self.performance_stats["total_chunks"] += stats["documents_created"]
                 
                 # 인덱스에 추가 (간단화된 버전)
                 for company in stats["companies_processed"]:
-                    doc_id = f"reviews_{company}_{datetime.now().strftime('%Y%m%d')}"
+                    doc_id = f"chunks_{company}_{datetime.now().strftime('%Y%m%d')}"
                     self.document_index[doc_id] = DocumentIndex(
                         document_id=doc_id,
-                        source_type="json_reviews",
+                        source_type="json_chunks",
                         company_name=company,
-                        category="reviews",
-                        file_path=f"{reviews_dir}/{company}_rag_optimized.json",
+                        category="chunks",
+                        file_path=f"{data_dir}/hybrid_vectordb/{company}_chunk_first_vectordb.json",
                         processed_at=datetime.now(),
                         chunk_count=stats["documents_created"] // len(stats["companies_processed"]),
                         embedding_model="text-embedding-3-small",
@@ -470,14 +499,14 @@ class KnowledgeBase:
                 # 인덱스 저장
                 self._save_index()
                 
-                logger.info(f"리뷰 데이터 로드 완료: {stats}")
+                logger.info(f"청크 데이터 로드 완료: {stats}")
                 return True
             else:
-                logger.error("리뷰 데이터 로드 실패")
+                logger.error("청크 데이터 로드 실패")
                 return False
                 
         except Exception as e:
-            logger.error(f"리뷰 데이터 로드 중 오류: {str(e)}")
+            logger.error(f"청크 데이터 로드 중 오류: {str(e)}")
             return False
     
     async def search_reviews(
@@ -505,27 +534,33 @@ class KnowledgeBase:
             if company_name:
                 filters["company"] = company_name
             
-            # 리뷰 측면에 따른 컬렉션 선택
+            # 리뷰 측면에 따른 컬렉션 선택 (새로운 6개 카테고리 체계 적용)
             collections_to_search = []
             if review_aspects:
                 collection_mapping = {
-                    "culture": "culture_reviews",
-                    "salary": "salary_discussions",
-                    "benefits": "salary_discussions", 
-                    "growth": "career_advice",
-                    "career": "career_advice",
-                    "interview": "interview_reviews",
-                    "management": "culture_reviews"
+                    "culture": "company_culture",
+                    "company_culture": "company_culture",
+                    "work_life_balance": "work_life_balance",
+                    "management": "management",
+                    "salary": "salary_benefits",
+                    "salary_benefits": "salary_benefits",
+                    "benefits": "salary_benefits", 
+                    "growth": "career_growth",
+                    "career_growth": "career_growth",
+                    "career": "career_growth",
+                    "general": "general"
                 }
                 for aspect in review_aspects:
                     if aspect in collection_mapping:
                         collections_to_search.append(collection_mapping[aspect])
             else:
                 collections_to_search = [
-                    "culture_reviews", 
-                    "salary_discussions", 
-                    "career_advice", 
-                    "company_general"
+                    "company_culture", 
+                    "work_life_balance",
+                    "management", 
+                    "salary_benefits", 
+                    "career_growth", 
+                    "general"
                 ]
             
             # 각 컬렉션에서 검색 수행
@@ -588,7 +623,7 @@ class KnowledgeBase:
             
             # 분석 유형에 따른 카테고리 설정
             if analysis_type == "comprehensive":
-                categories = ["culture_reviews", "salary_discussions", "career_advice", "interview_reviews"]
+                categories = ["company_culture", "work_life_balance", "management", "salary_benefits", "career_growth", "general"]
             elif analysis_type == "culture":
                 categories = ["culture_reviews"]
             elif analysis_type == "salary":
@@ -696,6 +731,75 @@ class KnowledgeBase:
         sorted_keywords = sorted(keyword_count.items(), key=lambda x: x[1], reverse=True)
         return [keyword for keyword, count in sorted_keywords[:10]]
     
+    async def get_available_companies(self) -> List[str]:
+        """
+        SQLite 메타데이터 데이터베이스에서 사용 가능한 회사 목록 조회
+        
+        Returns:
+            회사명 리스트
+        """
+        try:
+            # SQLite 메타데이터 DB에서 직접 조회 (빠르고 효율적)
+            companies = self.vector_store.get_companies_from_metadata()
+            logger.info(f"SQLite DB에서 회사 {len(companies)}개 조회됨")
+            return companies
+            
+        except Exception as e:
+            logger.error(f"SQLite DB 회사 목록 조회 실패: {str(e)}")
+            return []
+    
+    async def get_available_positions(self, company_name: Optional[str] = None) -> List[str]:
+        """
+        SQLite 메타데이터 데이터베이스에서 직무 목록 조회 (회사별 필터링)
+        
+        Args:
+            company_name: 특정 회사로 필터링 (None이면 모든 회사의 직무)
+            
+        Returns:
+            직무 리스트
+        """
+        try:
+            # SQLite 메타데이터 DB에서 직접 조회 (빠르고 효율적)
+            positions = self.vector_store.get_positions_from_metadata(company_name)
+            
+            if company_name:
+                logger.info(f"SQLite DB에서 {company_name} 직무 {len(positions)}개 조회됨")
+            else:
+                logger.info(f"SQLite DB에서 전체 직무 {len(positions)}개 조회됨")
+                
+            return positions
+            
+        except Exception as e:
+            logger.error(f"SQLite DB 직무 목록 조회 실패: {str(e)}")
+            return []
+    
+    async def get_available_years(self, company_name: Optional[str] = None) -> List[str]:
+        """
+        SQLite 메타데이터 데이터베이스에서 연도 목록 조회 (회사별 필터링)
+        
+        Args:
+            company_name: 특정 회사로 필터링 (None이면 모든 회사의 연도)
+            
+        Returns:
+            연도 리스트 (문자열, 내림차순 정렬)
+        """
+        try:
+            # SQLite 메타데이터 DB에서 직접 조회 (빠르고 효율적)
+            year_integers = self.vector_store.get_years_from_metadata(company_name)
+            # 정수를 문자열로 변환
+            years = [str(year) for year in year_integers]
+            
+            if company_name:
+                logger.info(f"SQLite DB에서 {company_name} 연도 {len(years)}개 조회됨")
+            else:
+                logger.info(f"SQLite DB에서 전체 연도 {len(years)}개 조회됨")
+                
+            return years
+            
+        except Exception as e:
+            logger.error(f"SQLite DB 연도 목록 조회 실패: {str(e)}")
+            return []
+    
     def get_statistics(self) -> Dict[str, Any]:
         """
         지식 베이스 통계 정보 반환
@@ -705,7 +809,7 @@ class KnowledgeBase:
         """
         # 컬렉션별 통계
         collection_stats = {}
-        for collection_name in ["culture_reviews", "salary_discussions", "career_advice", "interview_reviews", "company_general"]:
+        for collection_name in ["company_culture", "work_life_balance", "management", "salary_benefits", "career_growth", "general"]:
             stats = self.vector_store.get_collection_stats(collection_name)
             if stats:
                 collection_stats[collection_name] = stats
@@ -747,7 +851,7 @@ class KnowledgeBase:
             
             # 각 컬렉션 백업
             success_count = 0
-            for collection_name in ["culture_reviews", "salary_discussions", "career_advice", "interview_reviews", "company_general"]:
+            for collection_name in ["company_culture", "work_life_balance", "management", "salary_benefits", "career_growth", "general"]:
                 backup_file = backup_dir / f"{collection_name}_backup.json"
                 if self.vector_store.backup_collection(collection_name, str(backup_file)):
                     success_count += 1

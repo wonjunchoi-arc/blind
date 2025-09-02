@@ -35,24 +35,53 @@ class ReRanker:
     
     Cross-encoder 모델을 사용하여 쿼리와 문서 간의
     관련성을 더 정확하게 평가하고 순위를 조정합니다.
+    싱글톤 패턴을 사용하여 모델의 중복 로드를 방지합니다.
     """
+    
+    _instance = None
+    _model = None
+    _model_loaded = False
+    _model_name = None
+    
+    def __new__(cls, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
+        """싱글톤 패턴 적용"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
     
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         """
-        재랭커 초기화
+        재랭커 초기화 - 싱글톤으로 중복 로드 방지
         
         Args:
             model_name: 사용할 Cross-encoder 모델명
         """
+        # 이미 같은 모델이 로드되어 있으면 건너뛰기
+        if self.__class__._model_loaded and self.__class__._model_name == model_name:
+            self.model = self.__class__._model
+            self.model_loaded = self.__class__._model_loaded
+            return
+        
         try:
             # Cross-encoder 모델 로드
             self.model = CrossEncoder(model_name)
             self.model_loaded = True
+            
+            # 클래스 변수에 저장
+            self.__class__._model = self.model
+            self.__class__._model_loaded = True
+            self.__class__._model_name = model_name
+            
             print(f"재랭킹 모델 로드 완료: {model_name}")
         except Exception as e:
             print(f"재랭킹 모델 로드 실패: {str(e)}")
             self.model = None
             self.model_loaded = False
+            
+            # 클래스 변수 초기화
+            self.__class__._model = None
+            self.__class__._model_loaded = False
+            self.__class__._model_name = None
     
     def rerank_documents(
         self, 
@@ -131,7 +160,8 @@ class RAGRetriever:
         self, 
         vector_store: VectorStore,
         reranker: Optional[ReRanker] = None,
-        enable_reranking: bool = True
+        enable_reranking: bool = True,
+        keyword_threshold: float = 0.1
     ):
         """
         RAG 검색기 초기화
@@ -140,9 +170,11 @@ class RAGRetriever:
             vector_store: 벡터 데이터베이스
             reranker: 재랭킹 모델 (없으면 자동 생성)
             enable_reranking: 재랭킹 활성화 여부
+            keyword_threshold: 키워드 매칭 임계값 (0.0~1.0)
         """
         self.vector_store = vector_store
         self.enable_reranking = enable_reranking
+        self.keyword_threshold = keyword_threshold  # 키워드 매칭 임계값 저장
         
         # 재랭커 초기화
         if enable_reranking:
@@ -161,7 +193,7 @@ class RAGRetriever:
         k: int = 20,
         filters: Optional[Dict[str, Any]] = None,
         search_type: str = "hybrid",
-        enable_temporal_boost: bool = True
+        enable_temporal_boost: bool = False
     ) -> List[SearchResult]:
         """
         고급 검색 실행
@@ -172,7 +204,7 @@ class RAGRetriever:
             k: 검색할 문서 수
             filters: 메타데이터 필터
             search_type: 검색 타입 (semantic, keyword, hybrid)
-            enable_temporal_boost: 시간적 가중치 적용 여부
+            enable_temporal_boost: 시간적 가중치 적용 여부 (사용하지 않음)
             
         Returns:
             SearchResult 객체 리스트
@@ -180,10 +212,17 @@ class RAGRetriever:
         start_time = asyncio.get_event_loop().time()
         
         try:
+            print(f"[RAGRetriever] 검색 시작 - query: {query[:50]}..., collection: {collection_name}, k: {k}")
+            print(f"[RAGRetriever] 검색 설정 - type: {search_type}, reranking: {self.enable_reranking}")
+            
             # 1단계: 기본 벡터 검색
             raw_documents = await self._perform_vector_search(
                 query, collection_name, k * 2, filters  # 더 많이 검색해서 재랭킹
             )
+            
+            print(f"[RAGRetriever] 1단계 벡터 검색 결과: {len(raw_documents)}개")
+            if raw_documents:
+                print(f"[RAGRetriever] 첫 번째 결과 거리: {raw_documents[0].get('distance_score', 'N/A')}")
             
             if not raw_documents:
                 return []
@@ -199,34 +238,46 @@ class RAGRetriever:
                 documents = self._hybrid_search(query, raw_documents)
                 method = "hybrid"
             
-            # 3단계: 시간적 가중치 적용
-            if enable_temporal_boost:
-                documents = self._apply_temporal_boost(documents)
+            print(f"[RAGRetriever] 2단계 {search_type} 처리 결과: {len(documents)}개")
+            if documents:
+                print(f"[RAGRetriever] 첫 번째 결과 거리: {documents[0].get('distance_score', 'N/A')}")
             
             # 4단계: 재랭킹 (활성화된 경우)
             if self.reranker and self.enable_reranking:
                 doc_list = [self._result_to_document(result) for result in documents]
                 reranked = self.reranker.rerank_documents(query, doc_list, k)
                 
+                print(f"[RAGRetriever] 4단계 재랭킹 결과: {len(reranked)}개")
+                
                 # 재랭킹 결과를 SearchResult로 변환
                 search_results = []
                 for rank, (doc, score) in enumerate(reranked):
+                    # 거리를 관련성 점수로 변환 (0~1 범위, 높을수록 관련성 높음)
+                    relevance_score = max(0.0, 1.0 - (score / 2.0))
+                    print(f"[RAGRetriever] 재랭킹 결과 {rank+1}: distance={score:.3f}, relevance={relevance_score:.3f}")
                     search_results.append(SearchResult(
                         document=doc,
-                        relevance_score=score,
+                        relevance_score=relevance_score,
                         rank=rank + 1,
                         retrieval_method=f"{method}_reranked"
                     ))
             else:
+                print(f"[RAGRetriever] 재랭킹 없이 상위 {k}개 선택...")
                 # 재랭킹 없이 상위 k개 반환
                 search_results = []
                 for rank, result in enumerate(documents[:k]):
+                    distance_score = result.get("distance_score", 1.0)
+                    # 거리를 관련성 점수로 변환 (0~1 범위, 높을수록 관련성 높음)
+                    relevance_score = max(0.0, 1.0 - (distance_score / 2.0))
+                    print(f"[RAGRetriever] 결과 {rank+1}: distance={distance_score:.3f}, relevance={relevance_score:.3f}")
                     search_results.append(SearchResult(
                         document=self._result_to_document(result),
-                        relevance_score=result.get("similarity_score", 0.5),
+                        relevance_score=relevance_score,
                         rank=rank + 1,
                         retrieval_method=method
                     ))
+            
+            print(f"[RAGRetriever] 최종 SearchResult 객체: {len(search_results)}개")
             
             # 검색 통계 업데이트
             search_time = asyncio.get_event_loop().time() - start_time
@@ -259,7 +310,7 @@ class RAGRetriever:
         
         Args:
             query: 검색 쿼리
-            documents: 필터링할 문서들
+            documents: 필터링할 문서들 -> 벡터디비에서 온 문서들
             
         Returns:
             키워드가 포함된 문서들
@@ -267,30 +318,87 @@ class RAGRetriever:
         # 쿼리에서 키워드 추출 (공백으로 분리)
         keywords = [word.strip().lower() for word in query.split() if len(word.strip()) > 1]
         
+        print(f"[RAGRetriever] 키워드 필터링 - 추출된 키워드: {keywords}")
+        print(f"[RAGRetriever] 키워드 필터링 - 입력 문서 수: {len(documents)}개")
+        
         if not keywords:
             return documents
         
         filtered_docs = []
         
-        for doc in documents:
+        for idx, doc in enumerate(documents):
             content = doc.get("content", "").lower()
             
-            # 키워드 매칭 점수 계산
-            matched_keywords = sum(1 for keyword in keywords if keyword in content)
+            # 키워드 매칭 점수 계산 (한국어 유사 단어 고려)
+            matched_keywords = 0
+            for keyword in keywords:
+                if keyword in content:
+                    matched_keywords += 1
+                else:
+                    # 유사 단어 매칭 (한국어 어미 변화 고려)
+                    similar_words = self._get_similar_korean_words(keyword)
+                    if any(similar in content for similar in similar_words):
+                        matched_keywords += 0.7  # 유사 매칭은 0.7점
+            
             keyword_score = matched_keywords / len(keywords)
             
-            # 최소 50% 키워드가 매칭되는 문서만 포함
-            if keyword_score >= 0.5:
-                # 키워드 점수를 유사도 점수에 반영
-                original_score = doc.get("similarity_score", 0.5)
-                boosted_score = original_score * (1 + keyword_score * 0.3)  # 최대 30% 부스트
-                doc["similarity_score"] = min(1.0, boosted_score)
+            if idx < 3:  # 처음 3개 문서에 대해서만 디버깅 출력
+                print(f"[RAGRetriever] 문서 {idx+1}: 매칭 키워드={matched_keywords}/{len(keywords)}, 점수={keyword_score:.3f}")
+                print(f"[RAGRetriever] 문서 내용 일부: {content[:100]}...")
+            
+            # 키워드 매칭 임계값 적용 (설정 가능한 임계값 사용)
+            if keyword_score >= self.keyword_threshold:
+                # 키워드 점수를 거리 점수에 반영 (거리 감소 = 더 유사함)
+                original_distance = doc.get("distance_score", 1.0)
+                distance_reduction = keyword_score * 0.3  # 최대 30% 거리 감소
+                improved_distance = max(0.0, original_distance * (1 - distance_reduction))
+                doc["distance_score"] = improved_distance
                 doc["keyword_match_score"] = keyword_score
                 filtered_docs.append(doc)
+            else:
+                if idx < 3:  # 처음 3개 제외된 문서에 대해서만 디버깅 출력
+                    print(f"[RAGRetriever] 문서 {idx+1} 제외됨: 키워드 점수 {keyword_score:.3f} < 임계값 {self.keyword_threshold}")
         
-        # 부스트된 점수로 재정렬
-        filtered_docs.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
+        print(f"[RAGRetriever] 키워드 필터링 결과: {len(filtered_docs)}개 통과 / {len(documents)}개 입력 (임계값: {self.keyword_threshold})")
+        
+        # 개선된 거리로 재정렬 (낮은 거리가 먼저)
+        filtered_docs.sort(key=lambda x: x.get("distance_score", 2.0), reverse=False)
         return filtered_docs
+    
+    def _get_similar_korean_words(self, keyword: str) -> List[str]:
+        """
+        한국어 키워드의 유사 단어들을 생성
+        
+        Args:
+            keyword: 기본 키워드
+            
+        Returns:
+            유사 단어 리스트
+        """
+        similar_words = []
+        
+        # 기본 어미 변화 패턴
+        if keyword.endswith('좋은'):
+            similar_words.extend(['좋으신', '좋았', '좋아', '좋더', '좋다'])
+        elif keyword.endswith('직원'):
+            similar_words.extend(['직원들', '사원', '사원들', '사람', '사람들'])
+        elif keyword.endswith('분위기'):
+            similar_words.extend(['환경', '문화', '정서', '느낌'])
+        elif keyword.endswith('회사'):
+            similar_words.extend(['기업', '회사님', '직장'])
+        elif keyword.endswith('동료'):
+            similar_words.extend(['동료들', '팀원', '팀원들', '동료분', '동료분들'])
+        
+        # 일반적인 어미 변화 (받침 여부에 따라)
+        if len(keyword) > 2:
+            root = keyword[:-1]
+            # 현재진행형, 과거형, 존댓말 등 기본 변화
+            similar_words.extend([
+                root + '는', root + '은', root + '한', root + '된',
+                root + '고', root + '며', root + '면서', root + '지만'
+            ])
+        
+        return similar_words
     
     def _hybrid_search(self, query: str, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -326,96 +434,49 @@ class RAGRetriever:
         
         for doc in documents:
             metadata = doc.get("metadata", {})
-            original_score = doc.get("similarity_score", 0.5)
-            boost_factor = 1.0
+            original_distance = doc.get("distance_score", 1.0)
+            distance_reduction_factor = 0.0  # 거리 감소 비율
             
-            # 회사명 매칭 부스트
+            # 회사명 매칭 부스트 (거리 20% 감소)
             company = metadata.get("company", "").lower()
             if company and company in query_lower:
-                boost_factor += 0.2
+                distance_reduction_factor += 0.2
             
-            # 카테고리 매칭 부스트
+            # 카테고리 매칭 부스트 (거리 15% 감소)
             category = metadata.get("category", "").lower()
             category_keywords = {
-                "culture": ["문화", "분위기", "워라밸", "복지"],
-                "salary": ["연봉", "급여", "보너스", "혜택"],
-                "career": ["커리어", "승진", "성장", "면접"]
+                "company_culture": ["문화", "분위기", "사내문화", "회사문화"],
+                "work_life_balance": ["워라밸", "야근", "휴가", "근무시간"],
+                "management": ["경영진", "상사", "관리", "리더십"],
+                "salary_benefits": ["연봉", "급여", "보너스", "혜택", "복지"],
+                "career_growth": ["커리어", "승진", "성장", "발전", "교육"],
+                "general": ["일반", "기타", "전반적"]
             }
             
             for cat, keywords in category_keywords.items():
                 if category == cat and any(keyword in query_lower for keyword in keywords):
-                    boost_factor += 0.15
+                    distance_reduction_factor += 0.15
                     break
             
-            # 신뢰도 점수 기반 부스트
+            # 신뢰도 점수 기반 부스트 (거리 10% 감소)
             credibility = metadata.get("credibility_score", 0.5)
             if credibility > 0.7:
-                boost_factor += 0.1
+                distance_reduction_factor += 0.1
             
-            # 검증된 정보 부스트
+            # 검증된 정보 부스트 (거리 10% 감소)
             if metadata.get("verified", False):
-                boost_factor += 0.1
+                distance_reduction_factor += 0.1
             
-            # 최종 점수 적용
-            doc["similarity_score"] = min(1.0, original_score * boost_factor)
-            doc["boost_factor"] = boost_factor
+            # 최종 거리 적용 (최대 55% 감소 가능)
+            distance_reduction_factor = min(0.55, distance_reduction_factor)  # 최대 감소율 제한
+            improved_distance = max(0.0, original_distance * (1 - distance_reduction_factor))
+            doc["distance_score"] = improved_distance
+            doc["distance_reduction"] = distance_reduction_factor
         
-        # 부스트된 점수로 재정렬
-        documents.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
+        # 개선된 거리로 재정렬 (낮은 거리가 먼저)
+        documents.sort(key=lambda x: x.get("distance_score", 2.0), reverse=False)
         return documents
     
-    def _apply_temporal_boost(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        시간적 가중치 적용 (최신 정보에 가중치)
-        
-        Args:
-            documents: 가중치를 적용할 문서들
-            
-        Returns:
-            시간적 가중치가 적용된 문서들
-        """
-        current_time = datetime.now()
-        
-        for doc in documents:
-            metadata = doc.get("metadata", {})
-            
-            # 문서 생성 시간 파싱
-            created_at_str = metadata.get("created_at")
-            if not created_at_str:
-                continue
-            
-            try:
-                if isinstance(created_at_str, str):
-                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-                else:
-                    created_at = created_at_str
-                
-                # 시간 차이 계산 (일 단위)
-                days_old = (current_time - created_at).days
-                
-                # 시간적 가중치 계산 (최근 30일 내 정보에 가중치)
-                if days_old <= 30:
-                    temporal_boost = 1.2  # 20% 부스트
-                elif days_old <= 90:
-                    temporal_boost = 1.1  # 10% 부스트
-                elif days_old <= 365:
-                    temporal_boost = 1.0  # 가중치 없음
-                else:
-                    temporal_boost = 0.9  # 10% 페널티
-                
-                # 기존 점수에 시간적 가중치 적용
-                original_score = doc.get("similarity_score", 0.5)
-                doc["similarity_score"] = min(1.0, original_score * temporal_boost)
-                doc["temporal_boost"] = temporal_boost
-                doc["days_old"] = days_old
-                
-            except Exception as e:
-                print(f"시간 파싱 실패: {str(e)}")
-                continue
-        
-        # 시간적 가중치가 적용된 점수로 재정렬
-        documents.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
-        return documents
     
     def _result_to_document(self, result: Dict[str, Any]) -> Document:
         """검색 결과를 Document 객체로 변환"""
@@ -497,14 +558,20 @@ class RAGRetriever:
         Returns:
             SearchResult 객체 리스트
         """
-        # 카테고리 기반 컬렉션 선택
+        # 카테고리 기반 컬렉션 선택 (새로운 6개 카테고리 1:1 매핑)
         collection_map = {
-            "culture": "culture_reviews",
-            "salary": "salary_discussions", 
-            "career": "career_advice"
+            "culture": "company_culture",
+            "company_culture": "company_culture",
+            "work_life_balance": "work_life_balance",
+            "management": "management",
+            "salary": "salary_benefits",
+            "salary_benefits": "salary_benefits",
+            "career": "career_growth",
+            "career_growth": "career_growth",
+            "general": "general"
         }
         
-        collection_name = collection_map.get(category, "company_general")
+        collection_name = collection_map.get(category, "general")
         
         # 필터 구성
         filters = {"category": category}

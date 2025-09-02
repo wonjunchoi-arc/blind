@@ -16,12 +16,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Type, Union
 
 from langchain.schema import Document
-from langchain.memory import ConversationBufferMemory
 from langchain_openai import ChatOpenAI
 from langchain.tools import Tool
+from langchain_core.messages import AIMessage, HumanMessage
 
 from ..models.base import BaseModel, settings
 from ..models.user import UserProfile
+from ..rag.knowledge_base import KnowledgeBase
+from ..rag.retriever import RAGRetriever
 
 
 class AgentResult(BaseModel):
@@ -78,15 +80,16 @@ class AgentConfig(BaseModel):
     """ 
     
     # LLM 설정 - OpenAI 모델 관련
-    model_name: str = "gpt-4-turbo"  # 사용할 GPT 모델명
+    model_name: str = "gpt-5-mini-2025-08-07"  # 사용할 GPT 모델명
     temperature: float = 0.3  # 응답 창의성 (0.0: 일관성, 1.0: 창의성)
     max_tokens: int = 4000  # 최대 생성 토큰 수
     timeout: int = 60  # API 호출 타임아웃 (초)
     
     # RAG 검색 설정 - ChromaDB 벡터 검색
-    max_retrievals: int = 20  # 검색할 최대 문서 수
-    similarity_threshold: float = 0.7  # 유사도 임계값 (0.0~1.0)
-    enable_reranking: bool = True  # 재순위 매김 활성화
+    max_retrievals: int = 50  # 검색할 최대 문서 수
+    relevance_threshold: float = 0.2  # 관련성 점수 임계값 (0.0~1.0)  
+    enable_reranking: bool = False  # 재순위 매김 활성화
+    keyword_match_threshold: float = 0.005  # 키워드 매칭 임계값 (0.0~1.0)
     
     # 성능 최적화 설정
     enable_caching: bool = True  # 결과 캐싱 활성화
@@ -96,15 +99,15 @@ class AgentConfig(BaseModel):
     # 품질 관리 설정
     min_confidence_threshold: float = 0.6  # 최소 신뢰도 임계값
     require_sources: bool = True  # 출처 정보 필수 여부
-    validate_outputs: bool = True  # 출력 결과 검증 활성화
+    validate_outputs: bool = False  # 출력 결과 검증 활성화
     
     class Config:
         """Pydantic 설정 클래스 - 구성 예제 정의"""
         schema_extra = {
             "example": {
-                "model_name": "gpt-4-turbo",  # GPT-4 터보 모델 사용
+                "model_name": "gpt-5-mini-2025-08-07",  # GPT-5-mini 터보 모델 사용
                 "temperature": 0.3,  # 낮은 창의성으로 일관된 분석
-                "max_retrievals": 20,  # 최대 20개 관련 문서 검색
+                "max_retrievals": 50,  # 최대 20개 관련 문서 검색
                 "enable_caching": True  # 캐싱으로 성능 최적화
             }
         }
@@ -154,14 +157,15 @@ class BaseAgent(ABC):
             api_key=settings.openai_api_key  # API 키 (환경변수에서 로드)
         )
         
-        # 대화 기록 관리 메모리 초기화
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",  # 기록 키
-            return_messages=True  # 메시지 형태로 반환
-        )
+        # 대화 기록 관리를 위한 메시지 리스트 (메모리 마이그레이션)
+        self.chat_history: List[Union[AIMessage, HumanMessage]] = []
         
-        # RAG 검색 엔진 초기화 (하위 클래스에서 설정)
-        self.rag_retriever = None
+        # RAG 검색 엔진 초기화
+        self.knowledge_base = KnowledgeBase()
+        self.rag_retriever = RAGRetriever(
+            vector_store=self.knowledge_base.vector_store,
+            keyword_threshold=self.config.keyword_match_threshold
+        )
         
         # MCP 클라이언트 초기화 (하위 클래스에서 설정)
         self.mcp_clients = {}
@@ -170,6 +174,26 @@ class BaseAgent(ABC):
         self._execution_count = 0  # 총 실행 횟수
         self._total_execution_time = 0.0  # 총 실행 시간
         self._success_count = 0  # 성공 실행 횟수
+    
+    def add_message(self, message: Union[HumanMessage, AIMessage]):
+        """메시지를 대화 기록에 추가"""
+        self.chat_history.append(message)
+    
+    def add_user_message(self, content: str):
+        """사용자 메시지 추가"""
+        self.chat_history.append(HumanMessage(content=content))
+    
+    def add_ai_message(self, content: str):
+        """AI 응답 메시지 추가"""
+        self.chat_history.append(AIMessage(content=content))
+    
+    def get_chat_history(self) -> List[Union[HumanMessage, AIMessage]]:
+        """대화 기록 반환"""
+        return self.chat_history.copy()
+    
+    def clear_chat_history(self):
+        """대화 기록 초기화"""
+        self.chat_history.clear()
     
     @abstractmethod
     async def execute(
@@ -199,62 +223,134 @@ class BaseAgent(ABC):
     async def retrieve_knowledge(
         self, 
         query: str, 
-        category: Optional[str] = None,
+        collections: List[str] = None,
+        company_name: Optional[str] = None,
+        sentiment_filter: Optional[str] = None,  # "positive", "negative", "neutral"
+        content_type_filter: Optional[str] = None,  # "pros", "cons"
+        position_filter: Optional[str] = None,  # 직무 필터 (예: "IT 디자이너")
+        year_filter: Optional[str] = None,  # 연도 필터 (예: "2024")
         k: int = None
     ) -> List[Document]:
         """
-        🔍 RAG 시스템을 사용한 관련 지식 검색
+        🔍 RAG 시스템을 사용한 관련 지식 검색 (멀티 컬렉션 지원)
         
         🏗️ RAG 검색 과정:
         1. 쿼리를 임베딩 벡터로 변환 (OpenAI text-embedding-3-large)
-        2. ChromaDB에서 유사한 문서 벡터 검색
+        2. 지정된 컬렉션들에서 병렬 검색 수행
         3. 유사도 점수가 임계값 이상인 문서만 필터링
-        4. 카테고리별 필터링 적용 (선택적)
-        5. 상위 k개 문서 반환
+        4. 회사별 필터링 적용 (선택적)
+        5. 상위 k개 문서 반환 (중복 제거)
         
-        📁 검색 가능한 카테고리:
-        - culture_reviews: 회사 문화 리뷰
-        - salary_discussions: 연봉 관련 토론
-        - career_advice: 커리어 조언
-        - interview_reviews: 면접 후기
-        - company_general: 회사 일반 정보
+        📁 검색 가능한 컬렉션:
+        - company_culture: 회사 문화 리뷰 (기업문화, 조직문화)
+        - work_life_balance: 워라밸 관련 (근무시간, 야근, 휴가)
+        - management: 경영진/관리 관련 (상사, 리더십, 의사결정)
+        - salary_benefits: 연봉 및 복리후생 (급여, 보너스, 복지)
+        - career_growth: 커리어 성장 (승진, 교육, 발전기회)
+        - general: 일반적인 회사 정보
         
         Args:
             query: 검색할 질문 (예: "구글 워라밸 어때?")
-            category: 카테고리 필터 (예: "culture_reviews")
+            collections: 검색할 컬렉션 목록 (예: ["company_culture", "general"])
+            company_name: 회사명 필터 (예: "구글")
+            sentiment_filter: 감정 필터 ("positive", "negative", "neutral")
+            content_type_filter: 내용 타입 필터 ("pros", "cons")
+            position_filter: 직무 필터 (예: "IT 디자이너")
+            year_filter: 연도 필터 (예: "2024")
             k: 검색할 문서 개수 (기본값: config.max_retrievals=20)
             
         Returns:
             List[Document]: 관련 문서 목록 (유사도 점수 포함)
         """
+        # RAG 검색 시작 로깅
+        print(f"[{self.name}] RAG 검색 시작 - Query: {query}, Collections: {collections}, Company: {company_name}")
+        
         if not self.rag_retriever:
+            print(f"[{self.name}] RAG retriever가 초기화되지 않음!")
             return []
         
         k = k or self.config.max_retrievals
+        collections = collections or ["general"]  # 기본값: general 컬렉션
+        
         
         try:
-            # 검색 파라미터 구성
-            search_kwargs = {"k": k}  # 검색할 문서 개수
-            if category:
-                search_kwargs["filter"] = {"category": category}  # 카테고리 필터 적용
+            # 1차 메타데이터 필터 구성 (ChromaDB where 조건)
+            filters = {}
+            # TODO: 회사명 정규화 로직 구현 필요
+            if company_name:
+                filters["company"] = company_name
+            if content_type_filter:
+                filters["content_type"] = content_type_filter
+            if position_filter:
+                filters["position"] = position_filter
+            if year_filter:
+                filters["review_year"] = year_filter
             
-            # RAG 검색 실행 - ChromaDB에서 벡터 유사도 검색
-            documents = await self.rag_retriever.aget_relevant_documents(
-                query,  # 검색 질의
-                **search_kwargs  # 검색 옵션
-            )
+            print(f"[{self.name}] 적용된 필터: {filters}")
             
-            # 유사도 임계값 필터링 (설정된 경우)
-            if hasattr(self.rag_retriever, "similarity_threshold"):
-                documents = [
-                    doc for doc in documents 
-                    if getattr(doc, "metadata", {}).get("score", 1.0) >= self.config.similarity_threshold
-                ]
+            # 멀티 컬렉션에서 검색 수행
+            all_results = []
+            for collection_name in collections:
+                try:
+                    collection_k = k // len(collections) + 2
+                    print(f"[{self.name}] 컬렉션 '{collection_name}'에서 검색 중... (k={collection_k})")
+                    
+                    # 각 컬렉션에서 검색 실행
+                    search_results = await self.rag_retriever.search(
+                        query=query,
+                        collection_name=collection_name,
+                        k=collection_k,  # 컬렉션당 결과 수 조정
+                        filters=filters,
+                        search_type="hybrid"  # 의미적 검색과 키워드 검색을 결합
+                    )
+                    
+                    print(f"[{self.name}] 컬렉션 '{collection_name}'에서 {len(search_results)}개 결과 발견")
+                    if search_results:
+                        print(f"[{self.name}] 첫 번째 결과 유사도 점수: {search_results[0].relevance_score:.3f}")
+                    
+                    all_results.extend(search_results)
+                    
+                except Exception as e:
+                    print(f"[{self.name}] 컬렉션 {collection_name} 검색 실패: {str(e)}")
+                    continue
             
-            return documents[:k]  # 상위 k개 문서 반환
+            print(f"[{self.name}] 전체 검색 결과: {len(all_results)}개")
+            
+            # SearchResult를 Document로 변환
+            documents = []
+            seen_contents = set()  # 중복 제거용
+            
+            # 유사도 점수 기준으로 정렬
+            sorted_results = sorted(all_results, key=lambda x: x.relevance_score, reverse=True)
+            
+            filtered_by_threshold = 0
+            for result in sorted_results:
+                # 중복 제거 (내용의 첫 100자로 체크)
+                content_hash = hash(result.document.page_content[:100])
+                if content_hash not in seen_contents:
+                    # 관련성 점수 기준 임계값 필터링
+                    # 관련성 점수 범위: 0 ~ 1 (1에 가까울수록 관련성 높음)
+                    if result.relevance_score >= self.config.relevance_threshold:
+                        seen_contents.add(content_hash)
+                        documents.append(result.document)
+                        
+                        if len(documents) >= k:
+                            break
+                    else:
+                        filtered_by_threshold += 1
+            
+            print(f"[{self.name}] 최종 결과: {len(documents)}개, 관련성 점수 임계값으로 필터링된 결과: {filtered_by_threshold}개")
+            
+            if len(documents) == 0 and len(all_results) > 0:
+                print(f"[{self.name}] 경고: 검색된 결과가 있지만 관련성 점수 임계값({self.config.relevance_threshold})이 너무 높아 모든 결과가 필터링됨")
+                print(f"[{self.name}] 최고 관련성 점수: {max(r.relevance_score for r in all_results):.3f}")
+            
+            return documents
             
         except Exception as e:
-            print(f"RAG 검색 실패 - 에이전트 {self.name}: {str(e)}")
+            print(f"[{self.name}] RAG 검색 실패: {str(e)}")
+            import traceback
+            print(f"[{self.name}] 스택 트레이스: {traceback.format_exc()}")
             return []  # 실패 시 빈 리스트 반환
     
     async def call_mcp_service(
@@ -670,17 +766,27 @@ def create_agent(agent_type: str, config: Optional[AgentConfig] = None) -> BaseA
     """
     
     # 순환 import 방지를 위해 여기서 import
-    from .culture_agent import CultureAnalysisAgent
-    from .compensation_agent import CompensationAnalysisAgent
-    from .growth_agent import GrowthStabilityAgent
-    from .career_agent import CareerPathAgent
+    # 새로운 전문 에이전트들만 import
+    from .company_culture_agent import CompanyCultureAgent
+    from .work_life_balance_agent import WorkLifeBalanceAgent
+    from .management_agent import ManagementAgent
+    from .salary_benefits_agent import SalaryBenefitsAgent
+    from .career_growth_agent import CareerGrowthAgent
     
-    # 에이전트 타입과 클래스 매핑
+    # 에이전트 타입과 클래스 매핑 (새로운 전문 에이전트들)
     agent_classes = {
-        "culture": CultureAnalysisAgent,  # 문화 분석
-        "compensation": CompensationAnalysisAgent,  # 연봉 분석
-        "growth": GrowthStabilityAgent,  # 성장성 분석
-        "career": CareerPathAgent  # 커리어 분석
+        # 전문 에이전트들 (각 컬렉션별 + general)
+        "company_culture": CompanyCultureAgent,  # 기업문화 전문
+        "work_life_balance": WorkLifeBalanceAgent,  # 워라밸 전문
+        "management": ManagementAgent,  # 경영진 전문
+        "salary_benefits": SalaryBenefitsAgent,  # 연봉/복지 전문
+        "career_growth": CareerGrowthAgent,  # 커리어 성장 전문
+        
+        # 하위 호환성을 위한 별칭
+        "culture": CompanyCultureAgent,  # 기존 culture -> company_culture
+        "compensation": SalaryBenefitsAgent,  # 기존 compensation -> salary_benefits
+        "growth": CareerGrowthAgent,  # 기존 growth -> career_growth  
+        "career": CareerGrowthAgent  # 기존 career -> career_growth
     }
     
     # 지원되지 않는 타입 체크
@@ -703,17 +809,27 @@ def get_agent_by_type(agent_type: str) -> Type[BaseAgent]:
     """
     
     # 순환 import 방지를 위해 여기서 import
-    from .culture_agent import CultureAnalysisAgent
-    from .compensation_agent import CompensationAnalysisAgent
-    from .growth_agent import GrowthStabilityAgent
-    from .career_agent import CareerPathAgent
+    # 새로운 전문 에이전트들만 import
+    from .company_culture_agent import CompanyCultureAgent
+    from .work_life_balance_agent import WorkLifeBalanceAgent
+    from .management_agent import ManagementAgent
+    from .salary_benefits_agent import SalaryBenefitsAgent
+    from .career_growth_agent import CareerGrowthAgent
     
-    # 에이전트 타입과 클래스 매핑
+    # 에이전트 타입과 클래스 매핑 (새로운 전문 에이전트들)
     agent_classes = {
-        "culture": CultureAnalysisAgent,  # 문화 분석 클래스
-        "compensation": CompensationAnalysisAgent,  # 연봉 분석 클래스
-        "growth": GrowthStabilityAgent,  # 성장성 분석 클래스
-        "career": CareerPathAgent  # 커리어 분석 클래스
+        # 전문 에이전트들 (각 컬렉션별 + general)
+        "company_culture": CompanyCultureAgent,  # 기업문화 전문 클래스
+        "work_life_balance": WorkLifeBalanceAgent,  # 워라밸 전문 클래스
+        "management": ManagementAgent,  # 경영진 전문 클래스
+        "salary_benefits": SalaryBenefitsAgent,  # 연봉/복지 전문 클래스
+        "career_growth": CareerGrowthAgent,  # 커리어 성장 전문 클래스
+        
+        # 하위 호환성을 위한 별칭
+        "culture": CompanyCultureAgent,  # 기존 culture -> company_culture
+        "compensation": SalaryBenefitsAgent,  # 기존 compensation -> salary_benefits
+        "growth": CareerGrowthAgent,  # 기존 growth -> career_growth  
+        "career": CareerGrowthAgent  # 기존 career -> career_growth
     }
     
     return agent_classes.get(agent_type)  # 해당 타입의 클래스 반환 (없으면 None)

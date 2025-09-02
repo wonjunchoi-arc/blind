@@ -262,12 +262,12 @@ class DocumentProcessor:
         """
         documents = []
         
-        # 기본 메타데이터 구성
+        # 기본 메타데이터 구성 (새로운 카테고리 체계 적용)
         base_metadata = {
             "source_id": review.review_id,
             "source_type": "company_review",
             "company": review.company,
-            "category": "culture",  # 리뷰는 문화 카테고리로 분류
+            "category": "company_culture",  # 새로운 카테고리 체계 적용
             "overall_rating": review.overall_rating,
             "work_life_balance": review.work_life_balance,
             "culture_values": review.culture_values,
@@ -380,12 +380,12 @@ class DocumentProcessor:
         
         full_content = "\n".join(content_parts)
         
-        # 메타데이터 구성
+        # 메타데이터 구성 (새로운 카테고리 체계 적용)
         metadata = {
             "source_id": salary.salary_id,
             "source_type": "salary_info",
             "company": salary.company,
-            "category": "salary",
+            "category": "salary_benefits",  # 새로운 카테고리 체계 적용
             "position": salary.position,
             "level": salary.level,
             "department": salary.department,

@@ -12,8 +12,9 @@ import json
 import hashlib
 import logging
 import asyncio
+import sqlite3
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass
 import functools
 
@@ -29,6 +30,229 @@ from langchain_community.vectorstores import Chroma
 from langchain.schema import Document
 
 from ..models.base import BaseModel, settings
+
+
+class CompanyMetadataManager:
+    """
+    회사별 메타데이터 관리 클래스
+    
+    ChromaDB와 같은 디렉토리의 SQLite 데이터베이스에 
+    회사명, 직무, 연도 등의 메타데이터를 별도 저장하고 관리합니다.
+    """
+    
+    def __init__(self, db_path: str = None):
+        """
+        메타데이터 관리자 초기화
+        
+        Args:
+            db_path: SQLite 데이터베이스 경로
+        """
+        if db_path is None:
+            # ChromaDB와 같은 경로에 메타데이터 DB 생성
+            chroma_dir = settings.vector_db_path
+            self.db_path = os.path.join(chroma_dir, "company_metadata.db")
+        else:
+            self.db_path = db_path
+        
+        # 데이터베이스 초기화
+        self._init_database()
+    
+    def _init_database(self):
+        """데이터베이스 스키마 초기화"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 회사 테이블
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS companies (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        company_name TEXT UNIQUE NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # 직무 테이블
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS positions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        company_id INTEGER,
+                        position_name TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (company_id) REFERENCES companies (id),
+                        UNIQUE(company_id, position_name)
+                    )
+                ''')
+                
+                # 연도 테이블
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS years (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        company_id INTEGER,
+                        year INTEGER NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (company_id) REFERENCES companies (id),
+                        UNIQUE(company_id, year)
+                    )
+                ''')
+                
+                # 인덱스 생성
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(company_name)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_positions_company ON positions(company_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_years_company ON years(company_id)')
+                
+                conn.commit()
+                
+        except Exception as e:
+            print(f"데이터베이스 초기화 실패: {str(e)}")
+            raise
+    
+    def add_company_metadata(self, company_name: str, positions: Set[str], years: Set[int]):
+        """
+        회사의 메타데이터 추가/업데이트
+        
+        Args:
+            company_name: 회사명
+            positions: 직무 목록
+            years: 연도 목록
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 회사 추가/업데이트
+                cursor.execute('''
+                    INSERT OR IGNORE INTO companies (company_name) VALUES (?)
+                ''', (company_name,))
+                
+                cursor.execute('''
+                    UPDATE companies SET updated_at = CURRENT_TIMESTAMP WHERE company_name = ?
+                ''', (company_name,))
+                
+                # 회사 ID 조회
+                cursor.execute('SELECT id FROM companies WHERE company_name = ?', (company_name,))
+                company_id = cursor.fetchone()[0]
+                
+                # 직무 추가
+                for position in positions:
+                    if position and position.strip():
+                        cursor.execute('''
+                            INSERT OR IGNORE INTO positions (company_id, position_name) VALUES (?, ?)
+                        ''', (company_id, position.strip()))
+                
+                # 연도 추가
+                for year in years:
+                    if year and isinstance(year, int) and year > 1900:
+                        cursor.execute('''
+                            INSERT OR IGNORE INTO years (company_id, year) VALUES (?, ?)
+                        ''', (company_id, year))
+                
+                conn.commit()
+                
+        except Exception as e:
+            print(f"회사 메타데이터 추가 실패 ({company_name}): {str(e)}")
+            raise
+    
+    def get_all_companies(self) -> List[str]:
+        """모든 회사명 조회"""
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            logger.info(f"SQLite DB 경로: {self.db_path}")
+            logger.info(f"DB 파일 존재: {os.path.exists(self.db_path)}")
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT company_name FROM companies ORDER BY company_name')
+                companies = [row[0] for row in cursor.fetchall()]
+                
+                logger.info(f"조회된 회사 수: {len(companies)}")
+                for i, company in enumerate(companies):
+                    logger.info(f"  {i+1}. {repr(company)}")
+                
+                return companies
+                
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"회사 목록 조회 실패: {str(e)}")
+            import traceback
+            logger.error(f"상세 오류: {traceback.format_exc()}")
+            return []
+    
+    def get_positions_for_company(self, company_name: str = None) -> List[str]:
+        """특정 회사의 직무 목록 조회 (None이면 모든 직무)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                if company_name:
+                    cursor.execute('''
+                        SELECT DISTINCT p.position_name 
+                        FROM positions p 
+                        JOIN companies c ON p.company_id = c.id 
+                        WHERE c.company_name = ? 
+                        ORDER BY p.position_name
+                    ''', (company_name,))
+                else:
+                    cursor.execute('SELECT DISTINCT position_name FROM positions ORDER BY position_name')
+                
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"직무 목록 조회 실패: {str(e)}")
+            return []
+    
+    def get_years_for_company(self, company_name: str = None) -> List[int]:
+        """특정 회사의 연도 목록 조회 (None이면 모든 연도)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                if company_name:
+                    cursor.execute('''
+                        SELECT DISTINCT y.year 
+                        FROM years y 
+                        JOIN companies c ON y.company_id = c.id 
+                        WHERE c.company_name = ? 
+                        ORDER BY y.year DESC
+                    ''', (company_name,))
+                else:
+                    cursor.execute('SELECT DISTINCT year FROM years ORDER BY year DESC')
+                
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"연도 목록 조회 실패: {str(e)}")
+            return []
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """메타데이터 통계 조회"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 회사 수
+                cursor.execute('SELECT COUNT(*) FROM companies')
+                company_count = cursor.fetchone()[0]
+                
+                # 전체 직무 수
+                cursor.execute('SELECT COUNT(DISTINCT position_name) FROM positions')
+                position_count = cursor.fetchone()[0]
+                
+                # 전체 연도 수
+                cursor.execute('SELECT COUNT(DISTINCT year) FROM years')
+                year_count = cursor.fetchone()[0]
+                
+                return {
+                    "companies": company_count,
+                    "unique_positions": position_count,
+                    "unique_years": year_count,
+                    "database_path": self.db_path
+                }
+        except Exception as e:
+            print(f"통계 조회 실패: {str(e)}")
+            return {}
 
 
 @dataclass
@@ -47,7 +271,7 @@ class EmbeddingManager:
     """
     임베딩 생성 및 관리를 담당하는 클래스
     
-    OpenAI의 text-embedding-3-large 모델을 사용하여
+    OpenAI의 text-embedding-3-small 모델을 사용하여
     한국어 텍스트를 고품질 벡터로 변환합니다.
     """
     
@@ -202,15 +426,29 @@ class VectorStore:
     
     ChromaDB를 사용하여 문서 임베딩을 저장하고
     유사도 기반 검색을 제공합니다.
+    
+    싱글턴 패턴을 사용하여 ChromaDB 클라이언트 중복 생성을 방지합니다.
     """
+    
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls, persist_directory: str = None):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
     
     def __init__(self, persist_directory: str = None):
         """
-        벡터 스토어 초기화
+        벡터 스토어 초기화 (싱글턴 패턴으로 한 번만 실행)
         
         Args:
             persist_directory: 데이터베이스 저장 경로
         """
+        # 이미 초기화된 경우 중복 초기화 방지
+        if VectorStore._initialized:
+            return
+            
         self.persist_directory = persist_directory or settings.vector_db_path
         
         # ChromaDB 클라이언트 초기화 (성능 최적화)
@@ -228,19 +466,27 @@ class VectorStore:
         # 임베딩 함수 설정
         self.embedding_manager = EmbeddingManager()
         
+        # 회사 메타데이터 관리자 초기화
+        self.metadata_manager = CompanyMetadataManager()
+        print(f"CompanyMetadataManager 초기화 완료: {self.metadata_manager.db_path}")
+        
         # 컬렉션 초기화
         self._collections: Dict[str, Any] = {}
         self._initialize_collections()
+        
+        # 초기화 완료 플래그 설정
+        VectorStore._initialized = True
     
     def _initialize_collections(self):
         """데이터베이스 컬렉션들 초기화"""
-        # 카테고리별 컬렉션 생성
+        # 새로운 6개 카테고리에 맞춘 컬렉션 생성
         collection_names = [
-            "culture_reviews",     # 기업문화 리뷰
-            "salary_discussions",  # 연봉 정보
-            "career_advice",       # 커리어 조언
-            "interview_reviews",   # 면접 후기
-            "company_general"      # 일반 회사 정보
+            "company_culture",     # company_culture 전용
+            "work_life_balance",   # work_life_balance 전용
+            "management",          # management 전용
+            "salary_benefits",     # salary_benefits 전용
+            "career_growth",       # career_growth 전용
+            "general"              # general 전용
         ]
         
         for name in collection_names:
@@ -248,7 +494,7 @@ class VectorStore:
                 # 기존 컬렉션 가져오기 또는 새로 생성
                 collection = self.chroma_client.get_or_create_collection(
                     name=name,
-                    metadata={"description": f"BlindInsight {name} collection"}
+                    metadata={"description": f"BlindInsight {name} collection", "hnsw:space": "cosine"}
                 )
                 self._collections[name] = collection
                 print(f"컬렉션 '{name}' 초기화 완료")
@@ -404,40 +650,85 @@ class VectorStore:
         Returns:
             검색 결과 리스트 (거리 점수 포함)
         """
+        print(f"[VectorStore] 검색 요청 - Collection: {collection_name}, Query: {query[:50]}..., k: {k}")
+        print(f"[VectorStore] 필터: {filter_dict}")
+        print(f"[VectorStore] 사용 가능한 컬렉션: {list(self._collections.keys())}")
+        
         if collection_name not in self._collections:
-            print(f"존재하지 않는 컬렉션: {collection_name}")
+            print(f"[VectorStore] 존재하지 않는 컬렉션: {collection_name}")
             return []
         
         try:
             # 쿼리 임베딩 생성
+            print(f"[VectorStore] 쿼리 임베딩 생성 중...")
             query_embedding = await self.embedding_manager.create_embedding(query)
+            print(f"[VectorStore] 임베딩 생성 완료 (차원: {len(query_embedding)})")
             
             collection = self._collections[collection_name]
+            collection_count = collection.count()
+            print(f"[VectorStore] 컬렉션 '{collection_name}' 문서 수: {collection_count}")
+            
+            # ChromaDB WHERE 절 문법에 맞게 필터 변환
+            where_clause = None
+            if filter_dict and len(filter_dict) > 0:
+                if len(filter_dict) == 1:
+                    # 단일 조건인 경우: {"field": {"$eq": "value"}}
+                    key, value = next(iter(filter_dict.items()))
+                    where_clause = {key: {"$eq": value}}
+                else:
+                    # 다중 조건인 경우: {"$and": [{"field1": {"$eq": "value1"}}, {"field2": {"$eq": "value2"}}]}
+                    conditions = []
+                    for key, value in filter_dict.items():
+                        conditions.append({key: {"$eq": value}})
+                    where_clause = {"$and": conditions}
+            
+            print(f"[VectorStore] ChromaDB where 절: {where_clause}")
             
             # 유사도 검색 실행
+            print(f"[VectorStore] ChromaDB 검색 실행 중...")
             results = collection.query(
                 query_embeddings=[query_embedding],
                 n_results=k,
-                where=filter_dict,  # 메타데이터 필터 적용
+                where=where_clause,  # 변환된 필터 적용
                 include=["documents", "metadatas", "distances"]
             )
             
+            print(f"[VectorStore] ChromaDB 응답 - documents: {len(results.get('documents', [[]])[0]) if results.get('documents') else 0}개")
+            
             # 결과 포맷팅
             formatted_results = []
+            print(f"[VectorStore] 결과 포맷팅 시작...")
+            print(f"[VectorStore] results 구조: {type(results)}")
+            print(f"[VectorStore] results.keys(): {results.keys() if isinstance(results, dict) else 'Not dict'}")
+            
+            if results.get('documents'):
+                print(f"[VectorStore] documents 길이: {len(results['documents'])}")
+                if results['documents'][0]:
+                    print(f"[VectorStore] 첫 번째 documents 길이: {len(results['documents'][0])}")
+            
             if results['documents'] and results['documents'][0]:
+                print(f"[VectorStore] zip 처리 시작...")
                 for i, (doc, metadata, distance) in enumerate(zip(
                     results['documents'][0],
                     results['metadatas'][0],
                     results['distances'][0]
                 )):
-                    formatted_results.append({
+                    # 코사인 거리 사용 (0에 가까울수록 더 유사함)
+                    # 거리 값을 0~2 범위로 클리핑
+                    cosine_distance = max(0.0, min(2.0, distance))
+                    formatted_result = {
                         "rank": i + 1,
                         "content": doc,
                         "metadata": metadata,
-                        "similarity_score": 1 - distance,  # 거리를 유사도로 변환
-                        "distance": distance
-                    })
+                        "distance_score": cosine_distance,  # 거리 점수 (낮을수록 좋음)
+                        "raw_distance": distance
+                    }
+                    formatted_results.append(formatted_result)
+                    print(f"[VectorStore] 결과 {i+1}: distance={cosine_distance:.3f}, content={doc[:50]}...")
+            else:
+                print(f"[VectorStore] 결과 포맷팅 조건 불만족 - documents 존재: {bool(results.get('documents'))}, 첫번째 존재: {bool(results.get('documents') and results['documents'][0])}")
             
+            print(f"[VectorStore] 최종 포맷팅된 결과: {len(formatted_results)}개")
             return formatted_results
             
         except Exception as e:
@@ -482,6 +773,72 @@ class VectorStore:
             print(f"문서 삭제 실패: {str(e)}")
             return False
     
+    async def get_all_metadata(self, collection_name: str) -> List[Dict[str, Any]]:
+        """
+        컬렉션의 모든 메타데이터 조회
+        
+        Args:
+            collection_name: 조회할 컬렉션명
+            
+        Returns:
+            메타데이터 리스트
+        """
+        if collection_name not in self._collections:
+            return []
+        
+        try:
+            collection = self._collections[collection_name]
+            
+            # 모든 문서의 메타데이터만 조회 (성능 최적화)
+            all_data = collection.get(
+                include=["metadatas"]
+            )
+            
+            if all_data and "metadatas" in all_data:
+                return all_data["metadatas"]
+            else:
+                return []
+                
+        except Exception as e:
+            print(f"메타데이터 조회 실패 [{collection_name}]: {str(e)}")
+            return []
+    
+    async def search_metadata(
+        self, 
+        collection_name: str, 
+        filter_dict: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        메타데이터 필터링으로 문서 검색
+        
+        Args:
+            collection_name: 검색할 컬렉션명
+            filter_dict: 필터 조건
+            
+        Returns:
+            조건에 맞는 메타데이터 리스트
+        """
+        if collection_name not in self._collections:
+            return []
+        
+        try:
+            collection = self._collections[collection_name]
+            
+            # ChromaDB의 where 필터 사용
+            filtered_data = collection.get(
+                where=filter_dict,
+                include=["metadatas"]
+            )
+            
+            if filtered_data and "metadatas" in filtered_data:
+                return filtered_data["metadatas"]
+            else:
+                return []
+                
+        except Exception as e:
+            print(f"메타데이터 필터 검색 실패 [{collection_name}]: {str(e)}")
+            return []
+    
     def backup_collection(self, collection_name: str, backup_path: str) -> bool:
         """컬렉션 백업"""
         if collection_name not in self._collections:
@@ -511,3 +868,69 @@ class VectorStore:
         except Exception as e:
             print(f"컬렉션 백업 실패: {str(e)}")
             return False
+    
+    def add_company_metadata_from_documents(self, documents: List[DocumentEmbedding]):
+        """
+        문서들에서 회사 메타데이터를 추출하여 별도 DB에 저장
+        
+        Args:
+            documents: 메타데이터를 추출할 문서들
+        """
+        company_metadata = {}
+        
+        for doc in documents:
+            metadata = doc.metadata
+            company = metadata.get('company', '').strip()
+            position = metadata.get('position', '').strip()
+            
+            # 연도 추출 (review_date에서)
+            year = None
+            review_date = metadata.get('review_date', '')
+            if review_date and len(str(review_date)) >= 4:
+                try:
+                    # 날짜에서 연도 추출 (YYYY-MM-DD 또는 YYYY 형식)
+                    if '-' in str(review_date):
+                        year = int(str(review_date)[:4])
+                    else:
+                        year_candidate = int(str(review_date)[:4])
+                        if 1900 <= year_candidate <= 2030:
+                            year = year_candidate
+                except (ValueError, TypeError):
+                    pass
+            
+            if company:
+                if company not in company_metadata:
+                    company_metadata[company] = {
+                        'positions': set(),
+                        'years': set()
+                    }
+                
+                if position and position != 'unknown':
+                    company_metadata[company]['positions'].add(position)
+                
+                if year:
+                    company_metadata[company]['years'].add(year)
+        
+        # 메타데이터 DB에 저장
+        for company, data in company_metadata.items():
+            try:
+                self.metadata_manager.add_company_metadata(
+                    company_name=company,
+                    positions=data['positions'],
+                    years=data['years']
+                )
+                print(f"메타데이터 저장 완료 - {company}: 직무 {len(data['positions'])}개, 연도 {len(data['years'])}개")
+            except Exception as e:
+                print(f"메타데이터 저장 실패 ({company}): {str(e)}")
+    
+    def get_companies_from_metadata(self) -> List[str]:
+        """메타데이터 DB에서 회사 목록 조회"""
+        return self.metadata_manager.get_all_companies()
+    
+    def get_positions_from_metadata(self, company_name: str = None) -> List[str]:
+        """메타데이터 DB에서 직무 목록 조회"""
+        return self.metadata_manager.get_positions_for_company(company_name)
+    
+    def get_years_from_metadata(self, company_name: str = None) -> List[int]:
+        """메타데이터 DB에서 연도 목록 조회"""
+        return self.metadata_manager.get_years_for_company(company_name)
