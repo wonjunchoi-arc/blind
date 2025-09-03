@@ -277,7 +277,7 @@ class RAGRetriever:
                         retrieval_method=method
                     ))
             
-            print(f"[RAGRetriever] 최종 SearchResult 객체: {len(search_results)}개")
+            print(f"[RAGRetriever] 최종 SearchResult 객체:{collection_name} {len(search_results)}개")
             
             # 검색 통계 업데이트
             search_time = asyncio.get_event_loop().time() - start_time

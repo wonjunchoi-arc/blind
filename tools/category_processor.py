@@ -51,8 +51,8 @@ class CategorySpecificProcessor:
         self.keyword_dict = korean_keywords
         
         # 청킹 설정
-        self.chunk_size = 3         # 기본 청크 크기 (문장 수)
-        self.max_chunk_size = 5     # 최대 청크 크기
+        self.chunk_size = 2         # 기본 청크 크기 (문장 수)
+        self.max_chunk_size = 3     # 최대 청크 크기
         self.min_sentence_length = 5  # 최소 문장 길이
         
         # 카테고리 한글명 매핑

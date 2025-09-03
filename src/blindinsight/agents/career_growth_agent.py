@@ -66,6 +66,7 @@ class CareerGrowthAgent(BaseAgent):
         query: str,
         context: Optional[Dict[str, Any]] = None,
         user_profile: Optional[UserProfile] = None
+
     ) -> Dict[str, Any]:
         """
         커리어 향상 분석 메인 로직 - 장점과 단점을 개별적으로 분석
@@ -129,7 +130,7 @@ class CareerGrowthAgent(BaseAgent):
                 k=10
             )
         
-
+        print('부정적 커리어',negative_documents)
         
         # 3. 문서 존재 여부 확인
         if not positive_documents and not negative_documents:
