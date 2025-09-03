@@ -439,7 +439,7 @@ class KnowledgeBase:
                         collection_name=collection,
                         k=k // len(collections_to_search) + 2,  # 컬렉션당 결과 수 조정
                         filters=filters,
-                        search_type="hybrid"
+                        search_type="ensemble"
                     )
                     all_results.extend(results)
                 except Exception as e:

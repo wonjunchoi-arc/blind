@@ -79,7 +79,7 @@ class AgentConfig(BaseModel):
     """ 
     
     # LLM 설정 - OpenAI 모델 관련
-    model_name: str = "gpt-5-mini-2025-08-07"  # 사용할 GPT 모델명
+    model_name: str = "gpt-4o-mini-2024-07-18"  # 사용할 GPT 모델명
     temperature: float = 0.3  # 응답 창의성 (0.0: 일관성, 1.0: 창의성)
     max_tokens: int = 4000  # 최대 생성 토큰 수
     timeout: int = 60  # API 호출 타임아웃 (초)
@@ -272,7 +272,7 @@ class BaseAgent(ABC):
                         collection_name=collection_name,
                         k=collection_k,
                         filters=filters,
-                        search_type="hybrid"
+                        search_type="ensemble"
                     )
                     all_results.extend(search_results)
                 except Exception:
@@ -372,7 +372,7 @@ class BaseAgent(ABC):
                         collection_name=collection_name,
                         k=collection_k,
                         filters=filters,
-                        search_type="hybrid"
+                        search_type="ensemble"
                     )
                     # 키워드 결과에 1.5배 가중치
                     for result in keyword_results:
@@ -390,7 +390,7 @@ class BaseAgent(ABC):
                         collection_name=collection_name,
                         k=collection_k,
                         filters=filters,
-                        search_type="hybrid"
+                        search_type="ensemble"
                     )
                     all_results.extend(base_results)
                 except Exception:

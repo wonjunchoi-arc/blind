@@ -10,6 +10,8 @@ anthropic==0.34.2
 
 # Vector Database & Embeddings
 chromadb==0.5.11
+langchain-chroma
+rank-bm25
 faiss-cpu==1.8.0.post1
 sentence-transformers==3.0.1
 

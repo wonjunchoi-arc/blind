@@ -26,7 +26,7 @@ import numpy as np
 import chromadb
 from chromadb.config import Settings
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain.schema import Document
 
 from ..models.base import BaseModel, settings
@@ -302,6 +302,9 @@ class EmbeddingManager:
         self.model_name = model_name
         self.dimensions = dimensions
         
+        # LangChain Chroma용 임베딩 함수
+        self.embedding_function = self.embedding_model
+        
         # 임베딩 캐시 (메모리 효율성을 위해)
         self._embedding_cache: Dict[str, List[float]] = {}
         self._cache_hits = 0
@@ -472,6 +475,7 @@ class VectorStore:
         
         # 컬렉션 초기화
         self._collections: Dict[str, Any] = {}
+        self._langchain_chromas: Dict[str, Chroma] = {}  # LangChain Chroma 래퍼들
         self._initialize_collections()
         
         # 초기화 완료 플래그 설정
@@ -497,7 +501,16 @@ class VectorStore:
                     metadata={"description": f"BlindInsight {name} collection", "hnsw:space": "cosine"}
                 )
                 self._collections[name] = collection
-                print(f"컬렉션 '{name}' 초기화 완료")
+                
+                # LangChain Chroma 래퍼 생성
+                langchain_chroma = Chroma(
+                    client=self.chroma_client,
+                    collection_name=name,
+                    embedding_function=self.embedding_manager.embedding_function
+                )
+                self._langchain_chromas[name] = langchain_chroma
+                
+                print(f"컬렉션 '{name}' 및 LangChain 래퍼 초기화 완료")
                 
             except Exception as e:
                 print(f"컬렉션 '{name}' 초기화 실패: {str(e)}")
@@ -747,12 +760,17 @@ class VectorStore:
             return {
                 "collection_name": collection_name,
                 "document_count": count,
-                "last_updated": datetime.now().isoformat()
+                "last_updated": datetime.now().isoformat(),
+                "langchain_chroma_available": collection_name in self._langchain_chromas
             }
             
         except Exception as e:
             print(f"통계 조회 실패: {str(e)}")
             return {}
+    
+    def get_langchain_chroma(self, collection_name: str) -> Optional['Chroma']:
+        """LangChain Chroma 래퍼 반환"""
+        return self._langchain_chromas.get(collection_name)
     
     def delete_documents(
         self, 

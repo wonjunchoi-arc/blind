@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from langchain.schema import Document
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
 from sentence_transformers import CrossEncoder
 
 from .embeddings import VectorStore
@@ -192,7 +194,7 @@ class RAGRetriever:
         collection_name: str = "company_general",
         k: int = 20,
         filters: Optional[Dict[str, Any]] = None,
-        search_type: str = "hybrid",
+        search_type: str = "ensemble",
         enable_temporal_boost: bool = False
     ) -> List[SearchResult]:
         """
@@ -203,7 +205,7 @@ class RAGRetriever:
             collection_name: 검색할 컬렉션명
             k: 검색할 문서 수
             filters: 메타데이터 필터
-            search_type: 검색 타입 (semantic, keyword, hybrid)
+            search_type: 검색 타입 (semantic, keyword, ensemble, hybrid_legacy)
             enable_temporal_boost: 시간적 가중치 적용 여부 (사용하지 않음)
             
         Returns:
@@ -231,18 +233,21 @@ class RAGRetriever:
             if search_type == "semantic":
                 documents = raw_documents
                 method = "semantic"
-            elif search_type == "keyword":
-                documents = self._keyword_filter(query, raw_documents)
-                method = "keyword"
-            else:  # hybrid
-                documents = self._hybrid_search(query, raw_documents)
-                method = "hybrid"
+            # elif search_type == "keyword":
+            #     documents = self._keyword_filter_legacy(query, raw_documents)
+            #     method = "keyword"
+            elif search_type == "ensemble":
+                documents = await self._ensemble_search(query, collection_name, k, filters)
+                method = "ensemble"
+            # else:  # legacy hybrid
+            #     documents = self._hybrid_search_legacy(query, raw_documents)
+            #     method = "hybrid_legacy"
             
             print(f"[RAGRetriever] 2단계 {search_type} 처리 결과: {len(documents)}개")
             if documents:
                 print(f"[RAGRetriever] 첫 번째 결과 거리: {documents[0].get('distance_score', 'N/A')}")
             
-            # 4단계: 재랭킹 (활성화된 경우)
+            # 3단계: 재랭킹 (활성화된 경우)
             if self.reranker and self.enable_reranking:
                 doc_list = [self._result_to_document(result) for result in documents]
                 reranked = self.reranker.rerank_documents(query, doc_list, k)
@@ -304,179 +309,90 @@ class RAGRetriever:
             filter_dict=filters
         )
     
-    def _keyword_filter(self, query: str, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+    
+    async def _ensemble_search(
+        self,
+        query: str,
+        collection_name: str,
+        k: int,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """
-        키워드 기반 필터링
+        Ensemble 검색 (BM25 + Vector Similarity)
         
         Args:
             query: 검색 쿼리
-            documents: 필터링할 문서들 -> 벡터디비에서 온 문서들
+            collection_name: 컬렉션명
+            k: 반환할 문서 수
+            filters: 메타데이터 필터
             
         Returns:
-            키워드가 포함된 문서들
+            Ensemble 검색 결과 문서들
         """
-        # 쿼리에서 키워드 추출 (공백으로 분리)
-        keywords = [word.strip().lower() for word in query.split() if len(word.strip()) > 1]
-        
-        print(f"[RAGRetriever] 키워드 필터링 - 추출된 키워드: {keywords}")
-        print(f"[RAGRetriever] 키워드 필터링 - 입력 문서 수: {len(documents)}개")
-        
-        if not keywords:
-            return documents
-        
-        filtered_docs = []
-        
-        for idx, doc in enumerate(documents):
-            content = doc.get("content", "").lower()
+        try:
+            print(f"[RAGRetriever] Ensemble 검색 시작 - collection: {collection_name}")
             
-            # 키워드 매칭 점수 계산 (한국어 유사 단어 고려)
-            matched_keywords = 0
-            for keyword in keywords:
-                if keyword in content:
-                    matched_keywords += 1
-                else:
-                    # 유사 단어 매칭 (한국어 어미 변화 고려)
-                    similar_words = self._get_similar_korean_words(keyword)
-                    if any(similar in content for similar in similar_words):
-                        matched_keywords += 0.7  # 유사 매칭은 0.7점
+            # LangChain Chroma 래퍼 가져오기
+            chroma = self.vector_store.get_langchain_chroma(collection_name)
+            if not chroma:
+                print(f"[RAGRetriever] LangChain Chroma 래퍼 없음, 폴백 검색 사용")
+                return await self._perform_vector_search(query, collection_name, k, filters)
             
-            keyword_score = matched_keywords / len(keywords)
+            # ChromaDB에서 모든 문서 가져오기 (BM25용)
+            raw_docs = chroma.get(include=["documents", "metadatas"])
+            if not raw_docs["documents"]:
+                print(f"[RAGRetriever] 컬렉션에 문서가 없음: {collection_name}")
+                return []
             
-            if idx < 3:  # 처음 3개 문서에 대해서만 디버깅 출력
-                print(f"[RAGRetriever] 문서 {idx+1}: 매칭 키워드={matched_keywords}/{len(keywords)}, 점수={keyword_score:.3f}")
-                print(f"[RAGRetriever] 문서 내용 일부: {content[:100]}...")
+            # Document 객체로 변환
+            documents = [
+                Document(page_content=doc, metadata=meta or {})
+                for doc, meta in zip(raw_docs["documents"], raw_docs["metadatas"] or [{}] * len(raw_docs["documents"]))
+            ]
             
-            # 키워드 매칭 임계값 적용 (설정 가능한 임계값 사용)
-            if keyword_score >= self.keyword_threshold:
-                # 키워드 점수를 거리 점수에 반영 (거리 감소 = 더 유사함)
-                original_distance = doc.get("distance_score", 1.0)
-                distance_reduction = keyword_score * 0.3  # 최대 30% 거리 감소
-                improved_distance = max(0.0, original_distance * (1 - distance_reduction))
-                doc["distance_score"] = improved_distance
-                doc["keyword_match_score"] = keyword_score
-                filtered_docs.append(doc)
-            else:
-                if idx < 3:  # 처음 3개 제외된 문서에 대해서만 디버깅 출력
-                    print(f"[RAGRetriever] 문서 {idx+1} 제외됨: 키워드 점수 {keyword_score:.3f} < 임계값 {self.keyword_threshold}")
-        
-        print(f"[RAGRetriever] 키워드 필터링 결과: {len(filtered_docs)}개 통과 / {len(documents)}개 입력 (임계값: {self.keyword_threshold})")
-        
-        # 개선된 거리로 재정렬 (낮은 거리가 먼저)
-        filtered_docs.sort(key=lambda x: x.get("distance_score", 2.0), reverse=False)
-        return filtered_docs
-    
-    def _get_similar_korean_words(self, keyword: str) -> List[str]:
-        """
-        한국어 키워드의 유사 단어들을 생성
-        
-        Args:
-            keyword: 기본 키워드
+            print(f"[RAGRetriever] BM25용 문서 로드 완료: {len(documents)}개")
             
-        Returns:
-            유사 단어 리스트
-        """
-        similar_words = []
-        
-        # 기본 어미 변화 패턴
-        if keyword.endswith('좋은'):
-            similar_words.extend(['좋으신', '좋았', '좋아', '좋더', '좋다'])
-        elif keyword.endswith('직원'):
-            similar_words.extend(['직원들', '사원', '사원들', '사람', '사람들'])
-        elif keyword.endswith('분위기'):
-            similar_words.extend(['환경', '문화', '정서', '느낌'])
-        elif keyword.endswith('회사'):
-            similar_words.extend(['기업', '회사님', '직장'])
-        elif keyword.endswith('동료'):
-            similar_words.extend(['동료들', '팀원', '팀원들', '동료분', '동료분들'])
-        
-        # 일반적인 어미 변화 (받침 여부에 따라)
-        if len(keyword) > 2:
-            root = keyword[:-1]
-            # 현재진행형, 과거형, 존댓말 등 기본 변화
-            similar_words.extend([
-                root + '는', root + '은', root + '한', root + '된',
-                root + '고', root + '며', root + '면서', root + '지만'
-            ])
-        
-        return similar_words
-    
-    def _hybrid_search(self, query: str, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        하이브리드 검색 (의미 + 키워드)
-        
-        Args:
-            query: 검색 쿼리
-            documents: 검색된 문서들
+            # BM25 Retriever 생성
+            bm25_retriever = BM25Retriever.from_documents(documents=documents, k=k)
+            print(f"[RAGRetriever] BM25 Retriever 생성 완료")
             
-        Returns:
-            하이브리드 점수로 정렬된 문서들
-        """
-        # 키워드 필터링 적용
-        keyword_filtered = self._keyword_filter(query, documents.copy())
-        
-        # 메타데이터 기반 부스트 적용
-        boosted_docs = self._apply_metadata_boost(query, keyword_filtered)
-        
-        return boosted_docs
-    
-    def _apply_metadata_boost(self, query: str, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        메타데이터 기반 점수 부스트 적용
-        
-        Args:
-            query: 검색 쿼리
-            documents: 부스트할 문서들
+            # Vector Search Retriever 생성
+            vector_retriever = chroma.as_retriever(
+                search_type="similarity",
+                search_kwargs={'k': k}
+            )
+            print(f"[RAGRetriever] Vector Retriever 생성 완료")
             
-        Returns:
-            부스트된 점수로 정렬된 문서들
-        """
-        query_lower = query.lower()
-        
-        for doc in documents:
-            metadata = doc.get("metadata", {})
-            original_distance = doc.get("distance_score", 1.0)
-            distance_reduction_factor = 0.0  # 거리 감소 비율
+            # Ensemble Retriever 생성 (BM25:Vector = 0.5:0.5)
+            ensemble_retriever = EnsembleRetriever(
+                retrievers=[bm25_retriever, vector_retriever],
+                weights=[0.5, 0.5]
+            )
+            print(f"[RAGRetriever] Ensemble Retriever 생성 완료")
             
-            # 회사명 매칭 부스트 (거리 20% 감소)
-            company = metadata.get("company", "").lower()
-            if company and company in query_lower:
-                distance_reduction_factor += 0.2
+            # Ensemble 검색 실행
+            ensemble_results = ensemble_retriever.get_relevant_documents(query)
+            print(f"[RAGRetriever] Ensemble 검색 결과: {len(ensemble_results)}개")
             
-            # 카테고리 매칭 부스트 (거리 15% 감소)
-            category = metadata.get("category", "").lower()
-            category_keywords = {
-                "company_culture": ["문화", "분위기", "사내문화", "회사문화"],
-                "work_life_balance": ["워라밸", "야근", "휴가", "근무시간"],
-                "management": ["경영진", "상사", "관리", "리더십"],
-                "salary_benefits": ["연봉", "급여", "보너스", "혜택", "복지"],
-                "career_growth": ["커리어", "승진", "성장", "발전", "교육"],
-                "general": ["일반", "기타", "전반적"]
-            }
+            # 결과를 기존 형식으로 변환
+            converted_results = []
+            for i, doc in enumerate(ensemble_results[:k]):
+                converted_result = {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "distance_score": 0.5,  # Ensemble에서는 거리 점수가 없으므로 기본값
+                    "ensemble_rank": i + 1
+                }
+                converted_results.append(converted_result)
             
-            for cat, keywords in category_keywords.items():
-                if category == cat and any(keyword in query_lower for keyword in keywords):
-                    distance_reduction_factor += 0.15
-                    break
+            print(f"[RAGRetriever] Ensemble 검색 변환 완료: {len(converted_results)}개")
+            return converted_results
             
-            # 신뢰도 점수 기반 부스트 (거리 10% 감소)
-            credibility = metadata.get("credibility_score", 0.5)
-            if credibility > 0.7:
-                distance_reduction_factor += 0.1
-            
-            # 검증된 정보 부스트 (거리 10% 감소)
-            if metadata.get("verified", False):
-                distance_reduction_factor += 0.1
-            
-            # 최종 거리 적용 (최대 55% 감소 가능)
-            distance_reduction_factor = min(0.55, distance_reduction_factor)  # 최대 감소율 제한
-            improved_distance = max(0.0, original_distance * (1 - distance_reduction_factor))
-            doc["distance_score"] = improved_distance
-            doc["distance_reduction"] = distance_reduction_factor
-        
-        # 개선된 거리로 재정렬 (낮은 거리가 먼저)
-        documents.sort(key=lambda x: x.get("distance_score", 2.0), reverse=False)
-        return documents
-    
+        except Exception as e:
+            print(f"[RAGRetriever] Ensemble 검색 실패: {str(e)}")
+            # 폴백: 기존 벡터 검색 사용
+            return await self._perform_vector_search(query, collection_name, k, filters)
     
     def _result_to_document(self, result: Dict[str, Any]) -> Document:
         """검색 결과를 Document 객체로 변환"""
@@ -536,7 +452,7 @@ class RAGRetriever:
             query=expanded_query,
             filters=filters,
             k=k,
-            search_type="hybrid"
+            search_type="ensemble"
         )
     
     async def search_by_category(
@@ -586,7 +502,7 @@ class RAGRetriever:
             collection_name=collection_name,
             filters=filters,
             k=k,
-            search_type="hybrid"
+            search_type="ensemble"
         )
     
     async def get_document_suggestions(
