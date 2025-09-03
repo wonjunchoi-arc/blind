@@ -759,6 +759,49 @@ class BlindInsightApp:
                     help=f"{company_name} 회사의 실제 연도 목록입니다"
                 )
             
+            # 세부 분석 키워드 입력 (접힌 섹션)
+            st.markdown("---")
+            with st.expander("🎯 세부 분석 키워드 (선택사항)", expanded=False):
+                st.markdown("**각 항목별로 원하는 키워드를 입력하면 더 정확한 분석이 가능합니다.**")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    culture_keywords = st.text_input(
+                        "🏢 기업문화 키워드", 
+                        placeholder="예: 수평적, 자율적, 혁신적",
+                        help="기업문화에 대해 궁금한 구체적인 키워드를 입력하세요",
+                        key="culture_keywords"
+                    )
+                    worklife_keywords = st.text_input(
+                        "⚖️ 워라밸 키워드", 
+                        placeholder="예: 야근, 휴가, 유연근무",
+                        help="워라밸과 관련하여 궁금한 구체적인 키워드를 입력하세요",
+                        key="worklife_keywords"
+                    )
+                    management_keywords = st.text_input(
+                        "👥 경영진 키워드", 
+                        placeholder="예: 소통, 리더십, 투명성",
+                        help="경영진이나 상사에 대해 궁금한 구체적인 키워드를 입력하세요",
+                        key="management_keywords"
+                    )
+                
+                with col2:
+                    salary_keywords = st.text_input(
+                        "💰 연봉/복지 키워드", 
+                        placeholder="예: 성과급, 스톡옵션, 복리후생",
+                        help="연봉이나 복지에 대해 궁금한 구체적인 키워드를 입력하세요",
+                        key="salary_keywords"
+                    )
+                    career_keywords = st.text_input(
+                        "📈 커리어 성장 키워드", 
+                        placeholder="예: 승진, 교육, 전문성",
+                        help="커리어 성장에 대해 궁금한 구체적인 키워드를 입력하세요",
+                        key="career_keywords"
+                    )
+                
+                st.caption("💡 키워드를 입력하지 않으면 기본 분석이 진행됩니다. 쉼표로 여러 키워드를 구분할 수 있습니다.")
+            
             # 분석 실행 버튼
             submitted = st.form_submit_button("🔍 AI로 분석하기", type="primary", use_container_width=True)
             
@@ -781,21 +824,36 @@ class BlindInsightApp:
                     else:
                         st.warning(f"⚠️ 선택한 연도가 유효하지 않습니다: {selected_year}")
                 
+                # 키워드 정리 및 처리
+                keywords_dict = {
+                    "company_culture": culture_keywords.strip() if culture_keywords else "",
+                    "work_life_balance": worklife_keywords.strip() if worklife_keywords else "",
+                    "management": management_keywords.strip() if management_keywords else "",
+                    "salary_benefits": salary_keywords.strip() if salary_keywords else "",
+                    "career_growth": career_keywords.strip() if career_keywords else ""
+                }
+                
+                # 키워드가 하나라도 있는지 확인
+                has_keywords = any(keywords_dict.values())
+                
                 # 분석 실행
                 analysis_title = f"🤖 AI가 {company_name}"
                 if final_position:
                     analysis_title += f" ({final_position})"
                 if final_year:
                     analysis_title += f" [{final_year}년]"
+                if has_keywords:
+                    analysis_title += " 맞춤 키워드로"
                 analysis_title += "에 대해 분석중입니다..."
                 
                 with st.spinner(analysis_title):
-                    # 실제 에이전트들을 병렬로 실행
+                    # 실제 에이전트들을 병렬로 실행 (키워드 전달)
                     analysis_result = asyncio.run(
                         self._perform_parallel_agent_analysis(
                             company_name, 
                             position=final_position,
-                            year=final_year
+                            year=final_year,
+                            keywords=keywords_dict
                         )
                     )
                     if analysis_result:
@@ -816,7 +874,8 @@ class BlindInsightApp:
         self, 
         company_name: str, 
         position: Optional[str] = None, 
-        year: Optional[str] = None
+        year: Optional[str] = None,
+        keywords: Optional[Dict[str, str]] = None
     ) -> Dict:
         """5개의 전문 에이전트를 병렬로 실행하여 분석 수행"""
         try:
@@ -836,11 +895,12 @@ class BlindInsightApp:
                 "career_growth": CareerGrowthAgent()
             }
             
-            # 공통 컨텍스트 설정
+            # 공통 컨텍스트 설정 (키워드 포함)
             context = {
                 "company_name": company_name,
                 "position": position,
                 "year": year,
+                "keywords": keywords or {},
                 "timestamp": datetime.now(),
                 "analysis_type": "comprehensive"
             }

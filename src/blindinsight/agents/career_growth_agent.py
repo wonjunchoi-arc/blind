@@ -80,23 +80,54 @@ class CareerGrowthAgent(BaseAgent):
         """
         company_name = context.get("company_name") if context else query
         
+        # 사용자 키워드 추출 (커리어/성장 관련)
+        growth_keywords = ""
+        if context:
+            growth_keywords = context.get("growth_keywords", "")
+        
         # 1. 장점 관련 문서 검색 (긍정적 내용)
-        positive_documents = await self.retrieve_knowledge(
-            query=f"{company_name} 커리어 향상 승진 성장 발전 기회 교육 지원 스킬업 역량개발 프로모션 승격 인사평가 좋음 성과평가 공정 멘토링 코칭 세미나 교육과정 외부교육 내부교육 사내교육 자격증 지원 학위 지원 경력개발 전문성 향상 직무역량 리더십 개발 관리자 양성 경력경로 명확 로드맵 체계적 인재개발 잠재력 개발",
-            collections=self.target_collections,
-            company_name=company_name,
-            content_type_filter="pros",
-            k=10
-        )
+        positive_base_query = f"{company_name} 커리어 향상 승진 성장 발전 기회 교육 지원 스킬업 역량개발 프로모션 승격 인사평가 좋음 성과평가 공정 멘토링 코칭 세미나 교육과정 외부교육 내부교육 사내교육 자격증 지원 학위 지원 경력개발 전문성 향상 직무역량 리더십 개발 관리자 양성 경력경로 명확 로드맵 체계적 인재개발 잠재력 개발"
+        
+        if growth_keywords.strip():
+            positive_documents = await self.retrieve_knowledge_with_keywords(
+                base_query=positive_base_query,
+                user_keywords=f"{company_name} {growth_keywords} 좋음 긍정적 장점",
+                context=context,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="pros",
+                k=10
+            )
+        else:
+            positive_documents = await self.retrieve_knowledge(
+                query=positive_base_query,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="pros",
+                k=10
+            )
         
         # 2. 단점 관련 문서 검색 (부정적 내용)
-        negative_documents = await self.retrieve_knowledge(
-            query=f"{company_name} 커리어 향상 승진 어려움 성장 한계 발전 제한 교육 부족 지원 없음 스킬업 기회 없음 역량개발 미흡 프로모션 막힘 승격 힘듦 인사평가 불공정 성과평가 편파적 멘토링 없음 코칭 부재 교육과정 부실 외부교육 제한 사내교육 형식적 자격증 지원 없음 학위 지원 없음 경력개발 체계 없음 전문성 향상 기회 제한 직무역량 개발 미흡 리더십 개발 프로그램 없음 경력경로 불명확 로드맵없음 인재개발소홀 잠재력무시 성장정체 경력막힘",
-            collections=self.target_collections,
-            company_name=company_name,
-            content_type_filter="cons",
-            k=10
-        )
+        negative_base_query = f"{company_name} 커리어 향상 승진 어려움 성장 한계 발전 제한 교육 부족 지원 없음 스킬업 기회 없음 역량개발 미흡 프로모션 막힘 승격 힘듦 인사평가 불공정 성과평가 편파적 멘토링 없음 코칭 부재 교육과정 부실 외부교육 제한 사내교육 형식적 자격증 지원 없음 학위 지원 없음 경력개발 체계 없음 전문성 향상 기회 제한 직무역량 개발 미흡 리더십 개발 프로그램 없음 경력경로 불명확 로드맵없음 인재개발소홀 잠재력무시 성장정체 경력막힘"
+        
+        if growth_keywords.strip():
+            negative_documents = await self.retrieve_knowledge_with_keywords(
+                base_query=negative_base_query,
+                user_keywords=f"{company_name} {growth_keywords} 나쁨 부정적 단점",
+                context=context,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="cons",
+                k=10
+            )
+        else:
+            negative_documents = await self.retrieve_knowledge(
+                query=negative_base_query,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="cons",
+                k=10
+            )
         
 
         

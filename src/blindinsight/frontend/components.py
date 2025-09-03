@@ -571,17 +571,17 @@ class StatusIndicator:
     @staticmethod
     def _get_status_color(status: str) -> str:
         """상태에 따른 색상 반환"""
+        colors = {
+            "성공|완료|정상|active": "#28a745",
+            "진행중|처리중|pending": "#ffc107", 
+            "실패|오류|error|failed": "#dc3545"
+        }
         
         status_lower = status.lower()
-        
-        if status_lower in ["성공", "완료", "정상", "active"]:
-            return "#28a745"  # 녹색
-        elif status_lower in ["진행중", "처리중", "pending"]:
-            return "#ffc107"  # 노란색
-        elif status_lower in ["실패", "오류", "error", "failed"]:
-            return "#dc3545"  # 빨간색
-        else:
-            return "#6c757d"  # 회색
+        for keywords, color in colors.items():
+            if any(keyword in status_lower for keyword in keywords.split("|")):
+                return color
+        return "#6c757d"
 
 
 class FormComponents:

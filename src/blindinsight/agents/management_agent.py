@@ -32,24 +32,55 @@ class ManagementAgent(BaseAgent):
     ) -> Dict[str, Any]:
 
         company_name = context.get("company_name") if context else query
+        
+        # 사용자 키워드 추출 (경영진 관련)
+        management_keywords = ""
+        if context:
+            management_keywords = context.get("management_keywords", "")
 
         # 1. 장점 관련 문서 검색
-        positive_documents = await self.retrieve_knowledge(
-            query=f"{company_name} 경영진 대표 CEO 임원 이사 부사장 상무 전무 부장 팀장 관리자 리더십 좋음 우수함 뛰어남 소통 잘함 원활 개방적 의사결정 빠름 합리적 공정 투명 비전 명확 방향성 확실 전략적 사고 장기적 관점 직원 배려 인재 중시 성장 지원 혁신적 사고 변화 추진력 문제해결 능력 판단력 좋음 결단력 있음 책임감 강함 신뢰할 만함 존경스러움 역량 있음 경험 풍부 전문성 높음 카리스마 있음 동기부여 잘함",
-            collections=self.target_collections,
-            company_name=company_name,
-            content_type_filter="pros",
-            k=10
-        )
+        positive_base_query = f"{company_name} 경영진 대표 CEO 임원 이사 부사장 상무 전무 부장 팀장 관리자 리더십 좋음 우수함 뛰어남 소통 잘함 원활 개방적 의사결정 빠름 합리적 공정 투명 비전 명확 방향성 확실 전략적 사고 장기적 관점 직원 배려 인재 중시 성장 지원 혁신적 사고 변화 추진력 문제해결 능력 판단력 좋음 결단력 있음 책임감 강함 신뢰할 만함 존경스러움 역량 있음 경험 풍부 전문성 높음 카리스마 있음 동기부여 잘함"
+        
+        if management_keywords.strip():
+            positive_documents = await self.retrieve_knowledge_with_keywords(
+                base_query=positive_base_query,
+                user_keywords=f"{company_name} {management_keywords} 좋음 긍정적 장점",
+                context=context,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="pros",
+                k=10
+            )
+        else:
+            positive_documents = await self.retrieve_knowledge(
+                query=positive_base_query,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="pros",
+                k=10
+            )
 
         # 2. 단점 관련 문서 검색
-        negative_documents = await self.retrieve_knowledge(
-            query=f"{company_name} 경영진 대표 CEO 임원 이사 부사장 상무 전무 부장 팀장 관리자 리더십 부족 나쁨 미흡 소통 안됨 부족 폐쇄적 의사결정 느림 불합리 불공정 불투명 비전 불명확 방향성 없음 근시안적 사고 단기적 관점 직원 무시 인재 경시 성장 방해 보수적 사고 변화 거부 문제해결 능력 부족 판단력 부족 우유부단 책임회피 신뢰 못함 실망스러움 역량 부족 경험 부족 전문성 낮음 카리스마 없음 동기부여 못함 갑질 권위적 독선적 편파적 정치적 파벌 만들기",
-            collections=self.target_collections,
-            company_name=company_name,
-            content_type_filter="cons",
-            k=10
-        )
+        negative_base_query = f"{company_name} 경영진 대표 CEO 임원 이사 부사장 상무 전무 부장 팀장 관리자 리더십 부족 나쁨 미흡 소통 안됨 부족 폐쇄적 의사결정 느림 불합리 불공정 불투명 비전 불명확 방향성 없음 근시안적 사고 단기적 관점 직원 무시 인재 경시 성장 방해 보수적 사고 변화 거부 문제해결 능력 부족 판단력 부족 우유부단 책임회피 신뢰 못함 실망스러움 역량 부족 경험 부족 전문성 낮음 카리스마 없음 동기부여 못함 갑질 권위적 독선적 편파적 정치적 파벌 만들기"
+        
+        if management_keywords.strip():
+            negative_documents = await self.retrieve_knowledge_with_keywords(
+                base_query=negative_base_query,
+                user_keywords=f"{company_name} {management_keywords} 나쁨 부정적 단점",
+                context=context,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="cons",
+                k=10
+            )
+        else:
+            negative_documents = await self.retrieve_knowledge(
+                query=negative_base_query,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="cons",
+                k=10
+            )
 
         # 3. 문서 존재 여부 확인
         if not positive_documents and not negative_documents:

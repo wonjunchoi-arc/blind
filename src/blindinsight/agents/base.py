@@ -12,12 +12,11 @@ BlindInsight AI의 기본 에이전트 클래스 및 유틸리티
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Type, Union
 
 from langchain.schema import Document
-from langchain_openai import ChatOpenAI
 from langchain.tools import Tool
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage
 
 from ..models.base import BaseModel, settings
@@ -179,22 +178,6 @@ class BaseAgent(ABC):
         """메시지를 대화 기록에 추가"""
         self.chat_history.append(message)
     
-    def add_user_message(self, content: str):
-        """사용자 메시지 추가"""
-        self.chat_history.append(HumanMessage(content=content))
-    
-    def add_ai_message(self, content: str):
-        """AI 응답 메시지 추가"""
-        self.chat_history.append(AIMessage(content=content))
-    
-    def get_chat_history(self) -> List[Union[HumanMessage, AIMessage]]:
-        """대화 기록 반환"""
-        return self.chat_history.copy()
-    
-    def clear_chat_history(self):
-        """대화 기록 초기화"""
-        self.chat_history.clear()
-    
     @abstractmethod
     async def execute(
         self, 
@@ -262,21 +245,15 @@ class BaseAgent(ABC):
         Returns:
             List[Document]: 관련 문서 목록 (유사도 점수 포함)
         """
-        # RAG 검색 시작 로깅
-        print(f"[{self.name}] RAG 검색 시작 - Query: {query}, Collections: {collections}, Company: {company_name}")
-        
         if not self.rag_retriever:
-            print(f"[{self.name}] RAG retriever가 초기화되지 않음!")
             return []
         
         k = k or self.config.max_retrievals
-        collections = collections or ["general"]  # 기본값: general 컬렉션
+        collections = collections or ["general"]
         
         
         try:
-            # 1차 메타데이터 필터 구성 (ChromaDB where 조건)
             filters = {}
-            # TODO: 회사명 정규화 로직 구현 필요
             if company_name:
                 filters["company"] = company_name
             if content_type_filter:
@@ -286,72 +263,146 @@ class BaseAgent(ABC):
             if year_filter:
                 filters["review_year"] = year_filter
             
-            print(f"[{self.name}] 적용된 필터: {filters}")
-            
             # 멀티 컬렉션에서 검색 수행
             all_results = []
             for collection_name in collections:
                 try:
                     collection_k = k // len(collections) + 2
-                    print(f"[{self.name}] 컬렉션 '{collection_name}'에서 검색 중... (k={collection_k})")
-                    
-                    # 각 컬렉션에서 검색 실행
                     search_results = await self.rag_retriever.search(
                         query=query,
                         collection_name=collection_name,
-                        k=collection_k,  # 컬렉션당 결과 수 조정
+                        k=collection_k,
                         filters=filters,
-                        search_type="hybrid"  # 의미적 검색과 키워드 검색을 결합
+                        search_type="hybrid"
                     )
-                    
-                    print(f"[{self.name}] 컬렉션 '{collection_name}'에서 {len(search_results)}개 결과 발견")
-                    if search_results:
-                        print(f"[{self.name}] 첫 번째 결과 유사도 점수: {search_results[0].relevance_score:.3f}")
-                    
                     all_results.extend(search_results)
-                    
-                except Exception as e:
-                    print(f"[{self.name}] 컬렉션 {collection_name} 검색 실패: {str(e)}")
+                except Exception:
                     continue
             
-            print(f"[{self.name}] 전체 검색 결과: {len(all_results)}개")
-            
-            # SearchResult를 Document로 변환
+            # 중복 제거 및 필터링
             documents = []
-            seen_contents = set()  # 중복 제거용
-            
-            # 유사도 점수 기준으로 정렬
+            seen_contents = set()
             sorted_results = sorted(all_results, key=lambda x: x.relevance_score, reverse=True)
             
-            filtered_by_threshold = 0
             for result in sorted_results:
-                # 중복 제거 (내용의 첫 100자로 체크)
                 content_hash = hash(result.document.page_content[:100])
-                if content_hash not in seen_contents:
-                    # 관련성 점수 기준 임계값 필터링
-                    # 관련성 점수 범위: 0 ~ 1 (1에 가까울수록 관련성 높음)
-                    if result.relevance_score >= self.config.relevance_threshold:
-                        seen_contents.add(content_hash)
-                        documents.append(result.document)
-                        
-                        if len(documents) >= k:
-                            break
-                    else:
-                        filtered_by_threshold += 1
-            
-            print(f"[{self.name}] 최종 결과: {len(documents)}개, 관련성 점수 임계값으로 필터링된 결과: {filtered_by_threshold}개")
-            
-            if len(documents) == 0 and len(all_results) > 0:
-                print(f"[{self.name}] 경고: 검색된 결과가 있지만 관련성 점수 임계값({self.config.relevance_threshold})이 너무 높아 모든 결과가 필터링됨")
-                print(f"[{self.name}] 최고 관련성 점수: {max(r.relevance_score for r in all_results):.3f}")
+                if (content_hash not in seen_contents and 
+                    result.relevance_score >= self.config.relevance_threshold):
+                    seen_contents.add(content_hash)
+                    documents.append(result.document)
+                    if len(documents) >= k:
+                        break
             
             return documents
             
+        except Exception:
+            return []
+    
+    async def retrieve_knowledge_with_keywords(
+        self, 
+        base_query: str,
+        user_keywords: str = "",
+        context: Dict[str, Any] = None,
+        **kwargs
+    ) -> List[Document]:
+        """
+        🔍 키워드 우선순위 적용 RAG 검색 (다중 쿼리 가중치 방식)
+        
+        사용자가 입력한 키워드가 포함된 문서에 더 높은 우선순위를 부여하여
+        더 정확하고 맞춤형 검색 결과를 제공합니다.
+        
+        📊 검색 과정:
+        1. 키워드 전용 검색 수행 (k=15, 가중치 1.5배)
+        2. 기본 쿼리 검색 수행 (k=10, 가중치 1.0배)  
+        3. 결과 병합 및 중복 제거
+        4. 가중치 적용 후 점수 기준 정렬
+        5. 상위 k개 문서 반환
+        
+        Args:
+            base_query: 기본 검색 쿼리 (예: "카카오 company culture 분석")
+            user_keywords: 사용자 입력 키워드 (예: "수평적, 자율적")
+            context: 검색 컨텍스트 (회사명, 카테고리 등)
+            **kwargs: 추가 검색 옵션
+            
+        Returns:
+            검색 결과 Document 리스트 (키워드 우선순위 적용됨)
+        """
+        
+        if not user_keywords or not user_keywords.strip():
+            # 키워드가 없으면 기본 검색 실행
+            return await self.retrieve_knowledge(base_query, **kwargs)
+        
+        context = context or {}
+        company_name = context.get("company_name")
+        
+        # 에이전트별 카테고리 매핑
+        agent_category_map = {
+            "CompanyCultureAgent": "culture",
+            "WorkLifeBalanceAgent": "work_life_balance", 
+            "ManagementAgent": "management",
+            "SalaryBenefitsAgent": "salary_benefits",
+            "CareerGrowthAgent": "career_growth"
+        }
+        
+        agent_category = agent_category_map.get(self.__class__.__name__, "general")
+        
+        try:
+            if not self.knowledge_base:
+                logger.warning("지식베이스가 없어 기본 검색을 수행합니다")
+                return await self.retrieve_knowledge(base_query, **kwargs)
+            
+            # 1단계: 키워드 전용 검색 (높은 가중치)
+            keyword_results = await self.knowledge_base.search(
+                query=user_keywords,
+                company_name=company_name,
+                category=agent_category,
+                k=15
+            )
+            
+            # 2단계: 기본 쿼리 검색 (기본 가중치)
+            base_results = await self.knowledge_base.search(
+                query=base_query,
+                company_name=company_name, 
+                category=agent_category,
+                k=10
+            )
+            
+            # 3단계: 결과 병합 및 가중치 적용
+            combined_results = []
+            
+            # 키워드 결과에 1.5배 가중치 적용
+            for result in keyword_results:
+                result.score *= 1.5  # 키워드 결과 우선순위 향상
+                combined_results.append(result)
+            
+            # 기본 결과 추가 (중복 제거)
+            keyword_doc_ids = {getattr(r, 'document_id', id(r)) for r in keyword_results}
+            for result in base_results:
+                result_id = getattr(result, 'document_id', id(result))
+                if result_id not in keyword_doc_ids:
+                    combined_results.append(result)
+            
+            # 4단계: 점수 기준 정렬 후 상위 10개 반환
+            combined_results.sort(key=lambda x: x.score, reverse=True)
+            final_results = combined_results[:10]
+            
+            # Document 객체로 변환
+            documents = []
+            for result in final_results:
+                if hasattr(result, 'content'):
+                    doc = Document(
+                        page_content=result.content,
+                        metadata=getattr(result, 'metadata', {})
+                    )
+                    documents.append(doc)
+            
+            logger.info(f"키워드 우선순위 검색 완료: '{user_keywords}' -> {len(documents)}개 문서 (가중치 적용)")
+            return documents
+            
         except Exception as e:
-            print(f"[{self.name}] RAG 검색 실패: {str(e)}")
-            import traceback
-            print(f"[{self.name}] 스택 트레이스: {traceback.format_exc()}")
-            return []  # 실패 시 빈 리스트 반환
+            logger.error(f"키워드 우선순위 검색 실패: {str(e)}")
+            # 오류 시 기본 검색으로 폴백
+            return await self.retrieve_knowledge(base_query, **kwargs)
     
     async def call_mcp_service(
         self, 
@@ -382,16 +433,14 @@ class BaseAgent(ABC):
         Returns:
             Any: 서비스 응답 데이터 (서비스별로 다른 형태)
         """
-        # MCP 서비스 클라이언트 존재 여부 확인
         if service_name not in self.mcp_clients:
-            raise ValueError(f"MCP 서비스 '{service_name}'가 에이전트 {self.name}에 설정되지 않음")
+            raise ValueError(f"MCP 서비스 '{service_name}'가 설정되지 않음")
         
         try:
-            client = self.mcp_clients[service_name]  # 서비스 클라이언트 가져오기
-            return await client.call(method, params)  # 비동기 API 호출 실행
-        except Exception as e:
-            print(f"MCP 서비스 호출 실패 - {service_name}.{method}: {str(e)}")
-            return None  # 실패 시 None 반환
+            client = self.mcp_clients[service_name]
+            return await client.call(method, params)
+        except Exception:
+            return None
     
     async def generate_response(
         self, 
@@ -421,32 +470,20 @@ class BaseAgent(ABC):
         Returns:
             str: LLM이 생성한 분석 응답
         """
-        # RAG 문서가 있는 경우 컨텍스트 구성
         if context_documents:
-            # 최대 5개 문서로 컨텍스트 제한 (토큰 절약)
             context_text = "\n\n".join([
                 f"Document {i+1}:\n{doc.page_content}"
                 for i, doc in enumerate(context_documents[:5])
             ])
-            
-            # RAG 컨텍스트와 질의를 결합한 최종 프롬프트 생성
-            full_prompt = f"""Context Information:
-{context_text}
-
-Query: {prompt}
-
-Please provide a comprehensive analysis based on the context information above."""
+            full_prompt = f"Context:\n{context_text}\n\nQuery: {prompt}"
         else:
-            # RAG 문서가 없는 경우 원본 프롬프트 사용
             full_prompt = prompt
         
         try:
-            # OpenAI LLM을 통한 응답 생성
             response = await self.llm.ainvoke(full_prompt, **kwargs)
-            return response.content  # 생성된 텍스트 반환
-        except Exception as e:
-            print(f"LLM 응답 생성 실패 - 에이전트 {self.name}: {str(e)}")
-            return ""  # 실패 시 빈 문자열 반환
+            return response.content
+        except Exception:
+            return ""
     
     async def validate_result(
         self, 

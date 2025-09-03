@@ -80,23 +80,54 @@ class WorkLifeBalanceAgent(BaseAgent):
         """
         company_name = context.get("company_name") if context else query
         
+        # 사용자 키워드 추출 (워라밸 관련)
+        worklife_keywords = ""
+        if context:
+            worklife_keywords = context.get("worklife_keywords", "")
+        
         # 1. 장점 관련 문서 검색 (긍정적 내용)
-        positive_documents = await self.retrieve_knowledge(
-            query=f"{company_name} 워라밸 업무시간 정시퇴근 야근 없음 주말근무 없음 유연근무 재택근무 하이브리드 탄력근무 휴가 활용 쉬움 연차 자유롭게 휴가제도 좋음 개인시간 보장 프라이빗 시간 충분 개인생활 존중 가족시간 보장 취미활동 시간 여가시간 충분 스트레스 적음 업무강도 적정 일과 삶 조화 건강한 근무환경 퇴근 후 자유 업무 압박 적음 충분한 휴식 여유로운 일정 개인시간 확보",
-            collections=self.target_collections,
-            company_name=company_name,
-            content_type_filter="pros",
-            k=10
-        )
+        positive_base_query = f"{company_name} 워라밸 업무시간 정시퇴근 야근 없음 주말근무 없음 유연근무 재택근무 하이브리드 탄력근무 휴가 활용 쉬움 연차 자유롭게 휴가제도 좋음 개인시간 보장 프라이빗 시간 충분 개인생활 존중 가족시간 보장 취미활동 시간 여가시간 충분 스트레스 적음 업무강도 적정 일과 삶 조화 건강한 근무환경 퇴근 후 자유 업무 압박 적음 충분한 휴식 여유로운 일정 개인시간 확보"
+        
+        if worklife_keywords.strip():
+            positive_documents = await self.retrieve_knowledge_with_keywords(
+                base_query=positive_base_query,
+                user_keywords=f"{company_name} {worklife_keywords} 좋음 긍정적 장점",
+                context=context,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="pros",
+                k=10
+            )
+        else:
+            positive_documents = await self.retrieve_knowledge(
+                query=positive_base_query,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="pros",
+                k=10
+            )
         
         # 2. 단점 관련 문서 검색 (부정적 내용)
-        negative_documents = await self.retrieve_knowledge(
-            query=f"{company_name} 워라밸 나쁨 업무시간 길음 야근 많음 늦은 퇴근 주말근무 토요일 출근 일요일 출근 유연근무 없음 재택근무 불가 하이브리드 안됨 휴가 사용 어려움 연차 눈치 휴가제도 나쁨 개인시간 부족 프라이빗 시간 없음 개인생활 침해 가족시간 부족 취미활동 못함 여가시간 없음 스트레스 많음 업무강도 높음 일과 삶 불균형 피곤함 번아웃 과로 업무 압박 심함 휴식 부족 바쁜 일정 개인시간 확보 어려움 회식 강요 업무 연락 퇴근 후에도",
-            collections=self.target_collections,
-            company_name=company_name,
-            content_type_filter="cons",
-            k=10
-        )
+        negative_base_query = f"{company_name} 워라밸 나쁨 업무시간 길음 야근 많음 늦은 퇴근 주말근무 토요일 출근 일요일 출근 유연근무 없음 재택근무 불가 하이브리드 안됨 휴가 사용 어려움 연차 눈치 휴가제도 나쁨 개인시간 부족 프라이빗 시간 없음 개인생활 침해 가족시간 부족 취미활동 못함 여가시간 없음 스트레스 많음 업무강도 높음 일과 삶 불균형 피곤함 번아웃 과로 업무 압박 심함 휴식 부족 바쁜 일정 개인시간 확보 어려움 회식 강요 업무 연락 퇴근 후에도"
+        
+        if worklife_keywords.strip():
+            negative_documents = await self.retrieve_knowledge_with_keywords(
+                base_query=negative_base_query,
+                user_keywords=f"{company_name} {worklife_keywords} 나쁨 부정적 단점",
+                context=context,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="cons",
+                k=10
+            )
+        else:
+            negative_documents = await self.retrieve_knowledge(
+                query=negative_base_query,
+                collections=self.target_collections,
+                company_name=company_name,
+                content_type_filter="cons",
+                k=10
+            )
         
 
         # 3. 문서 존재 여부 확인
