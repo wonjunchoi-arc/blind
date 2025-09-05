@@ -180,7 +180,7 @@ class BlindReviewCrawler:
             raise
     
     def extract_review_data(self, element):
-        """개별 리뷰에서 데이터 추출"""
+        """개별 리뷰에서 데이터 추출 - 직무/연도 정보 추가"""
         try:
             # 평점 정보 추출
             rating_element = element.find_element(By.CLASS_NAME, "rating")
@@ -219,13 +219,82 @@ class BlindReviewCrawler:
             except NoSuchElementException:
                 title = "제목 없음"
             
-            # 직원 유형 추출
+            # 직원 유형, 직무, 연도 추출 (auth 클래스에서)
             try:
-                status_element = element.find_element(By.CSS_SELECTOR, "div.review_item_inr > div.auth")
-                status_text = status_element.text.split("\n")
-                status = status_text[1] if len(status_text) > 1 else "정보 없음"
+                auth_element = element.find_element(By.CSS_SELECTOR, "div.review_item_inr > div.auth")
+                auth_text = auth_element.text
+                
+                # 기본값 설정
+                status = "정보 없음"
+                position = "정보 없음"
+                year = "정보 없음"
+                
+                # auth_text 형태 1: "현직원\n엔지니어링\n2020.03.10"
+                # auth_text 형태 2: "현직원 · j********* · 하드웨어 엔지니어 - 2025.02.23"
+                
+                if '·' in auth_text:
+                    # 형태 2: · 구분자로 파싱
+                    auth_parts = [part.strip() for part in auth_text.split('·') if part.strip()]
+                    
+                    if len(auth_parts) >= 1:
+                        # "Verified User\n현직원"에서 "현직원"만 추출
+                        raw_status = auth_parts[0].strip()
+                        if '\n' in raw_status:
+                            status = raw_status.split('\n')[-1].strip()  # 마지막 부분만 가져오기
+                        else:
+                            status = raw_status
+                    
+                    if len(auth_parts) >= 3:
+                        # 직무 정보는 마지막 부분에서 추출 (예: "생산엔지니어·생산관리 - 2024.02.06")
+                        job_date_part = auth_parts[2].strip()
+                        
+                        # 날짜 부분 제거하고 직무만 추출
+                        if '-' in job_date_part:
+                            # 날짜 패턴을 찾아서 그 부분만 제거
+                            date_match = re.search(r'\s*-\s*\d{4}\.\d{2}\.\d{2}', job_date_part)
+                            if date_match:
+                                position = job_date_part[:date_match.start()].strip()
+                                # 연도 추출
+                                year_match = re.search(r'(\d{4})', date_match.group())
+                                if year_match:
+                                    year = year_match.group(1)
+                            else:
+                                # 정규식으로 날짜 패턴 제거 (폴백 방식)
+                                position = re.sub(r'\s*-\s*\d{4}\.?\d{0,2}\.?\d{0,2}.*', '', job_date_part).strip()
+                                year_match = re.search(r'(\d{4})', job_date_part)
+                                if year_match:
+                                    year = year_match.group(1)
+                        else:
+                            position = job_date_part
+                            
+                else:
+                    # 형태 1: 개행 구분자로 파싱
+                    auth_lines = [line.strip() for line in auth_text.split('\n') if line.strip()]
+                    
+                    if len(auth_lines) >= 1:
+                        # "Verified User"같은 부분을 제외하고 실제 직원 상태만 추출
+                        raw_status = auth_lines[0]
+                        if '현직원' in raw_status:
+                            status = '현직원'
+                        elif '전직원' in raw_status:
+                            status = '전직원'
+                        else:
+                            status = raw_status
+                    
+                    if len(auth_lines) >= 2:
+                        position = auth_lines[1]  # 직무
+                    
+                    if len(auth_lines) >= 3:
+                        # 연도 추출 (2020.03.10 형태에서 2020만 추출)
+                        date_text = auth_lines[2]
+                        year_match = re.search(r'(\d{4})', date_text)
+                        if year_match:
+                            year = year_match.group(1)
+                        
             except (NoSuchElementException, IndexError):
                 status = "정보 없음"
+                position = "정보 없음"
+                year = "정보 없음"
             
             # 장점/단점 추출
             pros = "정보 없음"
@@ -282,12 +351,14 @@ class BlindReviewCrawler:
                 detail_scores[4],
                 title,
                 status,
+                position,      # 새로 추가: 직무
+                year,          # 새로 추가: 연도
                 pros,
                 cons
             ]
             
         except Exception as e:
-            return [0.0, "0", "0", "0", "0", "0", "오류", "오류", "추출 실패", "추출 실패"]
+            return [0.0, "0", "0", "0", "0", "0", "오류", "오류", "오류", "오류", "추출 실패", "추출 실패"]
     
     def clean_text(self, text):
         """기본 텍스트 정제"""
@@ -360,7 +431,7 @@ class BlindReviewCrawler:
         return self._process_reviews_with_batch_optimization(company_code, all_reviews)
     
     def _process_reviews_with_batch_optimization(self, company_code: str, all_reviews: List) -> bool:
-        """개선된 배치 처리 방식"""
+        """개선된 배치 처리 방식 - 직무/연도 필드 추가"""
         
         print(f"\n📊 리뷰 전처리 중...")
         
@@ -370,7 +441,7 @@ class BlindReviewCrawler:
         
         for idx, raw_review in enumerate(tqdm(all_reviews, desc="청크 생성", unit="리뷰")):
             try:
-                # 리뷰 데이터 구조화
+                # 리뷰 데이터 구조화 (필드 추가)
                 review_data = {
                     "회사": company_code,
                     "총점": raw_review[0],
@@ -381,8 +452,11 @@ class BlindReviewCrawler:
                     "경영진": raw_review[5],
                     "제목": raw_review[6],
                     "직원유형_원본": raw_review[7],
-                    "장점": raw_review[8],
-                    "단점": raw_review[9],
+                    "직무": raw_review[8],        # 새로 추가
+                    "연도": raw_review[9],        # 새로 추가
+                    "직원유형": raw_review[7],  # 현직원/전직원 상태 추가
+                    "장점": raw_review[10],       # 인덱스 조정
+                    "단점": raw_review[11],       # 인덱스 조정
                     "id": f"review_{company_code}_{idx:04d}"
                 }
                 
@@ -404,6 +478,9 @@ class BlindReviewCrawler:
         
         print(f"📋 총 {len(all_chunk_contents)}개 청크 생성 완료")
         
+        # 나머지 처리는 기존과 동일...
+        # (분류, 매핑, 저장 로직은 변경 없음)
+        
         # 2단계: 대용량 배치 분류 (AI 사용시에만)
         classification_results = []
         
@@ -411,7 +488,7 @@ class BlindReviewCrawler:
             try:
                 print(f"🧠 AI 배치 분류 시작...")
                 
-                # 예상 API 호출 횟수 계산 (환경변수에서 배치 크기 사용)
+                # 예상 API 호출 횟수 계산
                 if SETTINGS_AVAILABLE:
                     batch_size = settings.ai_batch_size
                 else:
@@ -424,12 +501,7 @@ class BlindReviewCrawler:
                 print(f"   - 예상 API 호출: {expected_api_calls}회")
                 print(f"   - 절약된 API 호출: {individual_calls_saved}회")
                 
-                # 배치 분류 실행 (환경변수에서 배치 크기 사용)
-                if SETTINGS_AVAILABLE:
-                    batch_size = settings.ai_batch_size
-                else:
-                    batch_size = int(os.getenv("AI_BATCH_SIZE", "30"))
-                
+                # 배치 분류 실행
                 classification_results = self.category_processor.text_processor.process_chunks_batch(
                     all_chunk_contents, batch_size=batch_size
                 )

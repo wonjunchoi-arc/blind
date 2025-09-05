@@ -118,6 +118,11 @@ class CategorySpecificProcessor:
         # 직원 정보 파싱
         employee_info = self._parse_employee_info(review_data.get("직원유형_원본", ""))
         
+        # 크롤러에서 추출한 직무/연도/직원유형 정보 추가
+        position = review_data.get("직무", "정보 없음")
+        year = review_data.get("연도", "정보 없음")
+        employee_type = review_data.get("직원유형", "정보 없음")
+        
         # 평점 정보
         ratings = {
             "career_growth": float(review_data.get("커리어향상", 0)),
@@ -144,18 +149,18 @@ class CategorySpecificProcessor:
             title_sentences = self._split_text_with_kss(title_text)
             if title_sentences:
                 title_chunk_info = self._create_chunk_info_without_classification(
-                    title_sentences, "title", company, review_number, employee_info, ratings, None
+                    title_sentences, "title", company, review_number, employee_info, ratings, None, position, year, employee_type
                 )
                 if title_chunk_info:
                     all_chunk_info["title"].append(title_chunk_info)
         
         # 2. 장점/단점 청크 정보 생성
         pros_chunk_infos = self._create_chunks_info_for_content(
-            pros_text, "pros", company, review_number, employee_info, ratings, is_positive=True
+            pros_text, "pros", company, review_number, employee_info, ratings, is_positive=True, position=position, year=year, employee_type=employee_type
         )
         
         cons_chunk_infos = self._create_chunks_info_for_content(
-            cons_text, "cons", company, review_number, employee_info, ratings, is_positive=False
+            cons_text, "cons", company, review_number, employee_info, ratings, is_positive=False, position=position, year=year, employee_type=employee_type
         )
         
         all_chunk_info["pros"].extend(pros_chunk_infos)
@@ -170,7 +175,9 @@ class CategorySpecificProcessor:
     
     def _create_chunks_info_for_content(self, text: str, chunk_type: str, company: str,
                                        review_number: str, employee_info: Dict,
-                                       ratings: Dict[str, float], is_positive: bool) -> List[Dict]:
+                                       ratings: Dict[str, float], is_positive: bool, 
+                                       position: str = "정보 없음", year: str = "정보 없음", 
+                                       employee_type: str = "정보 없음") -> List[Dict]:
         """텍스트에서 청크 정보들 생성 (분류 없이)"""
         
         if not text or not text.strip():
@@ -192,7 +199,7 @@ class CategorySpecificProcessor:
             content = self._join_sentences_naturally(group)
             if len(content.strip()) >= 20:  # 최소 길이 체크
                 chunk_info = self._create_chunk_info_without_classification(
-                    group, chunk_type, company, review_number, employee_info, ratings, is_positive, i
+                    group, chunk_type, company, review_number, employee_info, ratings, is_positive, position, year, employee_type, i
                 )
                 if chunk_info:
                     chunk_infos.append(chunk_info)
@@ -202,7 +209,7 @@ class CategorySpecificProcessor:
     def _create_chunk_info_without_classification(self, sentences: List[str], chunk_type: str,
                                                 company: str, review_number: str, employee_info: Dict,
                                                 ratings: Dict[str, float], is_positive: Optional[bool], 
-                                                chunk_idx: int = 0) -> Dict:
+                                                position: str, year: str, employee_type: str, chunk_idx: int = 0) -> Dict:
         """분류 없는 청크 정보 생성"""
         
         content = self._join_sentences_naturally(sentences)
@@ -219,7 +226,10 @@ class CategorySpecificProcessor:
             "sentences": sentences,
             "chunk_idx": chunk_idx,
             "content_length": len(content),
-            "sentence_count": len(sentences)
+            "sentence_count": len(sentences),
+            "position": position,      # 직무 정보 추가
+            "year": year,              # 연도 정보 추가
+            "employee_type": employee_type  # 직원유형 정보 추가
         }
         
         return chunk_info
@@ -257,6 +267,9 @@ class CategorySpecificProcessor:
             "confidence_score": confidence,
             "classification_method": classification_result.get("method", "unknown"),
             "employee_status": chunk_info['employee_info'].get("employment_status", "정보 없음"),
+            "employee_type": chunk_info.get("employee_type", "정보 없음"),    # 현직원/전직원 정보 추가
+            "position": chunk_info.get("position", "정보 없음"),           # 직무 정보 추가
+            "year": chunk_info.get("year", "정보 없음"),                   # 연도 정보 추가
             "sentence_count": chunk_info['sentence_count'],
             "chunk_index": chunk_info['chunk_idx'],
             "content_length": chunk_info['content_length']
