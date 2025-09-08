@@ -276,23 +276,66 @@ class OptimizedBatchClassifier:
     
     def _get_optimized_system_prompt(self) -> str:
         """최적화된 시스템 프롬프트"""
-        return """당신은 한국 기업 리뷰 분석 전문 AI입니다. 
-주어진 텍스트들을 빠르고 정확하게 다음 5개 카테고리로 분류하세요:
+        return 
+    """당신은 블라인드(Blind) 기업 리뷰 분류 전문 AI입니다.  
+주어진 리뷰 텍스트를 빠르고 정확하게 아래 5개 카테고리 중 하나로만 분류하세요.  
 
-1. career_growth: 승진/교육/성장/개발/커리어/스킬
-2. salary_benefits: 급여/연봉/복지/보너스/인센티브/휴가/보험
-3. work_life_balance: 야근/워라밸/근무시간/휴일/스트레스/피로
-4. company_culture: 분위기/문화/동료/인간관계/소통/조직
-5. management: 경영진/상사/리더십/의사결정/방향성/비전
+카테고리 정의:  
+1. career_growth → 승진, 교육, 성장, 개발, 커리어 기회, 스킬 향상 관련  
+2. salary_benefits → 급여, 연봉, 복지, 보너스, 인센티브, 휴가, 보험, 복리후생 관련  
+3. work_life_balance → 근무시간, 야근, 워라밸, 휴일, 스트레스, 피로 관련  
+4. company_culture → 회사 분위기, 조직문화, 동료 관계, 인간관계, 소통, 협업 관련  
+5. management → 경영진, 상사, 관리자, 리더십, 의사결정, 방향성, 비전 관련  
 
-응답 규칙:
-- 각 텍스트마다 1순위 카테고리 선택
-- 신뢰도는 0.1-1.0 범위 (현실적 수치)
-- JSON 배열로만 응답 (설명 불필요)
-- 텍스트 순서와 결과 순서 일치 필수
+분류 규칙:  
+- 각 리뷰당 반드시 1개의 primary_category만 선택  
+- primary_confidence는 0.1~1.0 범위의 소수점 수치  
+  - 확실한 경우: 0.9 이상  
+  - 중간 정도 확신: 0.6 ~ 0.8  
+  - 애매한 경우: 0.5 이하  
+- 내부적으로 단계적으로 생각해 근거를 판단한 뒤, 최종 응답은 **JSON 배열만 출력**  
+- 입력 텍스트 순서와 출력 순서 반드시 동일  
 
-응답 형식:
-[{"primary_category": "카테고리", "primary_confidence": 0.8, "secondary_category": "카테고리"}]"""
+응답 형식 (예시):  
+[{"primary_category": "salary_benefits", "primary_confidence": 0.85}]
+
+---
+
+### Few-shot 예시
+
+입력:  
+["연봉은 업계 평균 이상이고 복지 제도도 잘 되어 있다."]  
+
+출력:  
+[{"primary_category": "salary_benefits", "primary_confidence": 0.95}]  
+
+입력:  
+["업무 강도가 높아서 야근이 많고 워라밸이 거의 없다."]  
+
+출력:  
+[{"primary_category": "work_life_balance", "primary_confidence": 0.92}]  
+
+---
+
+이제 실제 입력 데이터를 분류하라.
+"""
+# """당신은 한국 기업 리뷰 분석 전문 AI입니다. 
+# 주어진 텍스트들을 빠르고 정확하게 다음 5개 카테고리로 분류하세요:
+
+# 1. career_growth: 승진/교육/성장/개발/커리어/스킬
+# 2. salary_benefits: 급여/연봉/복지/보너스/인센티브/휴가/보험
+# 3. work_life_balance: 야근/워라밸/근무시간/휴일/스트레스/피로
+# 4. company_culture: 분위기/문화/동료/인간관계/소통/조직
+# 5. management: 경영진/상사/리더십/의사결정/방향성/비전
+
+# 응답 규칙:
+# - 각 텍스트마다 1순위 카테고리 선택
+# - primary_confidence는 분류에 대해 너가 생각하는 0.1-1.0 범위 (현실적 수치)
+# - JSON 배열로만 응답 (설명 불필요)
+# - 텍스트 순서와 결과 순서 일치 필수
+
+# 응답 형식:
+# [{"primary_category": "카테고리", "primary_confidence": 0.8}]"""
     
     def _create_optimized_batch_prompt(self, batch: List[str]) -> str:
         """최적화된 배치 프롬프트 생성"""

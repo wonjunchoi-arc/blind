@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-청크 데이터 마이그레이션 스크립트
+청크 데이터 마이그레이션 스크립트 (배치 최적화 버전)
 
 tools/data의 chunk_first_vectordb JSON 파일들을 ChromaDB 벡터 데이터베이스로 마이그레이션합니다.
-OpenAI text-embedding-3-small 모델을 사용하여 임베딩을 생성합니다.
+OpenAI text-embedding-3-small 모델을 사용하여 배치 임베딩을 생성합니다.
 """
-#migrate_reviews.py
 
 import asyncio
 import os
@@ -17,14 +16,14 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root / "src"))
 
-from blindinsight.rag.json_processor import ChunkDataLoader
+from blindinsight.rag.json_processor import ChunkDataLoader, BatchPerformanceMonitor
 from blindinsight.models.base import settings
 
 
 async def main():
-    """메인 마이그레이션 함수"""
+    """메인 마이그레이션 함수 (배치 최적화)"""
     print("=" * 60)
-    print("[처리중] BlindInsight Review Data Migration")
+    print("[처리중] BlindInsight Review Data Migration (Batch Optimized)")
     print("=" * 60)
     
     # 환경 변수 확인
@@ -33,7 +32,7 @@ async def main():
         return False
     
     # 데이터 디렉토리 확인
-    data_dir = project_root / "data" / "hybrid_vectordb"
+    data_dir = Path(settings.json_data_path)
     if not data_dir.exists():
         print(f"[오류] 데이터 디렉토리를 찾을 수 없습니다: {data_dir}")
         return False
@@ -41,29 +40,40 @@ async def main():
     print(f"[폴더] 데이터 디렉토리: {data_dir}")
     print(f"[모델] 임베딩 모델: text-embedding-3-small (1536차원)")
     print(f"[저장] 벡터 DB: {settings.vector_db_path}")
+    print(f"[최적화] 배치 임베딩 생성 + 배치 벡터 저장")
     print()
+    
+    # 성능 모니터 초기화
+    monitor = BatchPerformanceMonitor()
     
     # ChunkDataLoader 초기화
     try:
         loader = ChunkDataLoader(str(data_dir))
         print("[성공] ChunkDataLoader 초기화 완료")
+        
+        # 성능 최적화 설정
+        loader.processor.embedding_manager.batch_size = 100  # 임베딩 배치 크기
+        print(f"[설정] 임베딩 배치 크기: {loader.processor.embedding_manager.batch_size}")
+        
     except Exception as e:
         print(f"[오류] ChunkDataLoader 초기화 실패: {e}")
         return False
     
     # 사용자 확인
-    response = input("마이그레이션을 시작하시겠습니까? (y/n): ").lower()
+    response = input("배치 최적화 마이그레이션을 시작하시겠습니까? (y/n): ").lower()
     if response != 'y':
         print("마이그레이션이 취소되었습니다.")
         return False
     
-    print("\n[시작] 마이그레이션 시작...")
+    print("\n[시작] 배치 최적화 마이그레이션 시작...")
     start_time = time.time()
+    monitor.start_monitoring()
     
     try:
-        # 모든 청크 데이터 로드 및 벡터화
-        success = await loader.load_all_chunks()
+        # 배치 최적화된 청크 데이터 로드 및 벡터화
+        success = await loader.load_all_chunks_optimized()
         
+        monitor.stop_monitoring()
         end_time = time.time()
         processing_time = end_time - start_time
         
@@ -71,17 +81,34 @@ async def main():
             # 통계 정보 출력
             stats = loader.get_stats()
             print("\n" + "=" * 60)
-            print("[완료] 마이그레이션 완료!")
+            print("[완료] 배치 최적화 마이그레이션 완료!")
             print("=" * 60)
             print(f"[통계] 처리된 파일: {stats['files_processed']}개")
             print(f"[문서] 생성된 문서: {stats['documents_created']}개")
             print(f"[회사] 처리된 회사: {len(stats['companies_processed'])}개")
             print(f"[시간] 총 처리 시간: {processing_time:.2f}초")
+            print(f"[성능] 문서 처리 속도: {stats['documents_created']/processing_time:.2f} docs/sec")
             
             if stats['companies_processed']:
                 print(f"\n처리된 회사 목록:")
                 for i, company in enumerate(sorted(stats['companies_processed']), 1):
                     print(f"  {i:2d}. {company}")
+            
+            # 성능 보고서 출력
+            performance_report = monitor.get_performance_report()
+            print("\n" + "=" * 60)
+            print("[성능] 배치 처리 성능 보고서")
+            print("=" * 60)
+            if 'error' not in performance_report:
+                summary = performance_report['processing_summary']
+                embedding = performance_report['embedding_performance']
+                storage = performance_report['storage_performance']
+                
+                print(f"[전체] 문서 처리 속도: {summary['documents_per_second']:.2f} docs/sec")
+                print(f"[API] API 호출 속도: {summary['api_calls_per_second']:.2f} calls/sec")
+                print(f"[임베딩] 처리 시간: {embedding['embedding_time_seconds']:.2f}초 ({embedding['embedding_percentage']:.1f}%)")
+                print(f"[저장] 처리 시간: {storage['storage_time_seconds']:.2f}초 ({storage['storage_percentage']:.1f}%)")
+                print(f"[효율성] {performance_report['efficiency_metrics']['api_efficiency']}")
             
             # 데이터 무결성 검증
             print("\n[검증] 데이터 무결성 검증 중...")
@@ -111,22 +138,34 @@ async def main():
         traceback.print_exc()
         return False
     
-    print("\n[완료] 마이그레이션이 성공적으로 완료되었습니다!")
+    print("\n[완료] 배치 최적화 마이그레이션이 성공적으로 완료되었습니다!")
     return True
 
 
-async def migrate_single_company(company_name: str):
-    """특정 회사만 마이그레이션"""
-    print(f"[회사] {company_name} 마이그레이션 시작...")
+async def migrate_single_company_optimized(company_name: str):
+    """특정 회사만 배치 최적화 마이그레이션"""
+    print(f"[회사] {company_name} 배치 최적화 마이그레이션 시작...")
     
-    data_dir = project_root / "data"
+    monitor = BatchPerformanceMonitor()
+    monitor.start_monitoring()
+    
+    data_dir = Path(settings.json_data_path)
     loader = ChunkDataLoader(str(data_dir))
     
-    success = await loader.load_single_company(company_name)
+    # 배치 크기 최적화
+    loader.processor.embedding_manager.batch_size = 100
+    
+    success = await loader.load_single_company_optimized(company_name)
+    
+    monitor.stop_monitoring()
     
     if success:
         stats = loader.get_stats()
+        performance = monitor.get_performance_report()
         print(f"[성공] {company_name} 마이그레이션 완료: {stats['documents_created']}개 문서")
+        if 'error' not in performance:
+            summary = performance['processing_summary']
+            print(f"[성능] 처리 속도: {summary['documents_per_second']:.2f} docs/sec")
     else:
         print(f"[실패] {company_name} 마이그레이션 실패")
     
@@ -137,16 +176,30 @@ def show_help():
     """도움말 출력"""
     print("""
 사용법:
-  python migrate_reviews.py              - 모든 회사 데이터 마이그레이션
-  python migrate_reviews.py [회사명]     - 특정 회사만 마이그레이션
+  python migrate_reviews.py              - 모든 회사 데이터 배치 마이그레이션
+  python migrate_reviews.py [회사명]     - 특정 회사만 배치 마이그레이션
   python migrate_reviews.py --help       - 도움말 출력
 
+배치 최적화 기능:
+  • 임베딩 배치 생성 (100개씩 묶어서 API 호출)
+  • 벡터 DB 배치 저장 (500개씩 ChromaDB에 저장)
+  • 성능 모니터링 및 보고서 제공
+  • 메모리 효율적인 처리
+
 예시:
-  python migrate_reviews.py 네이버       - 네이버 청크 데이터만 마이그레이션
-  python migrate_reviews.py 카카오       - 카카오 청크 데이터만 마이그레이션
+  python migrate_reviews.py 네이버       - 네이버 청크 데이터만 배치 마이그레이션
+  python migrate_reviews.py 카카오       - 카카오 청크 데이터만 배치 마이그레이션
 
 환경 변수:
   OPENAI_API_KEY                         - OpenAI API 키 (필수)
+  JSON_DATA_PATH                         - JSON 데이터 디렉토리 경로
+  VECTOR_DB_PATH                         - 벡터 DB 저장 경로
+
+성능 최적화:
+  - 임베딩 배치 크기: 100개
+  - 벡터 DB 배치 크기: 500개
+  - 병렬 처리 및 비동기 최적화
+  - API 호출 최소화 및 캐싱
 
 출력:
   ChromaDB 벡터 데이터베이스에 다음 6개 컬렉션으로 저장:
@@ -166,10 +219,10 @@ if __name__ == "__main__":
             show_help()
             sys.exit(0)
         
-        # 특정 회사 마이그레이션
+        # 특정 회사 배치 최적화 마이그레이션
         company_name = sys.argv[1]
-        print(f"특정 회사 마이그레이션 모드: {company_name}")
-        asyncio.run(migrate_single_company(company_name))
+        print(f"특정 회사 배치 최적화 마이그레이션 모드: {company_name}")
+        asyncio.run(migrate_single_company_optimized(company_name))
     else:
-        # 전체 마이그레이션
+        # 전체 배치 최적화 마이그레이션
         asyncio.run(main())

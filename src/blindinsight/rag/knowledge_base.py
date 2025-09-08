@@ -192,10 +192,10 @@ class KnowledgeBase:
             if hasattr(self.vector_store, '_collections'):
                 logger.info(f"벡터 스토어 컬렉션 수: {len(self.vector_store._collections)}")
             
-            # 통계 확인
-            stats = self.get_statistics()
-            total_docs = stats.get("knowledge_base", {}).get("total_documents", 0)
-            logger.info(f"지식베이스 초기화 완료 - 총 문서 수: {total_docs}")
+            # # 통계 확인
+            # stats = self.get_statistics()
+            # total_docs = stats.get("knowledge_base", {}).get("total_documents", 0)
+            # logger.info(f"지식베이스 초기화 완료 - 총 문서 수: {total_docs}")
             
         except Exception as e:
             logger.error(f"지식베이스 초기화 실패: {str(e)}")
@@ -299,6 +299,12 @@ class KnowledgeBase:
             )
             
             if success:
+                # 문서 임베딩에서 회사 메타데이터 추출 및 저장
+                try:
+                    self.vector_store.add_company_metadata_from_documents(document_embeddings)
+                    logger.info(f"회사 메타데이터 추출 및 저장 완료")
+                except Exception as e:
+                    logger.warning(f"회사 메타데이터 추출 실패: {str(e)}")
                 # 성능 통계 업데이트
                 self.performance_stats["documents_processed"] += len(documents)
                 self.performance_stats["total_chunks"] += len(all_chunks)
@@ -667,6 +673,14 @@ class KnowledgeBase:
             logger.error(f"SQLite DB 연도 목록 조회 실패: {str(e)}")
             return []
     
+    def extract_metadata_from_existing_data_DEPRECATED(self):
+        """
+        DEPRECATED: 이 메서드는 더 이상 사용되지 않습니다.
+        migrate_reviews.py에서 마이그레이션 시 자동으로 메타데이터가 수집됩니다.
+        """
+        logger.warning("extract_metadata_from_existing_data는 deprecated 되었습니다. migrate_reviews.py를 실행하세요.")
+        return 0
+    
     def get_statistics(self) -> Dict[str, Any]:
         """
         지식 베이스 통계 정보 반환
@@ -685,7 +699,7 @@ class KnowledgeBase:
         total_documents = sum(stats.get("document_count", 0) for stats in collection_stats.values())
         
         # 임베딩 캐시 통계
-        cache_stats = self.embedding_manager.get_cache_stats()
+        # cache_stats = self.embedding_manager.get_cache_stats()
         
         return {
             "knowledge_base": {
@@ -694,7 +708,7 @@ class KnowledgeBase:
                 "collections": collection_stats
             },
             "performance": self.performance_stats,
-            "embedding_cache": cache_stats,
+            # "embedding_cache": cache_stats,
             "system_info": {
                 "embedding_model": self.embedding_manager.embedding_model.model,
                 "vector_db_path": str(self.vector_store.persist_directory),
