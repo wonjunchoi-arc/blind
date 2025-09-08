@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 from ..models.user import UserProfile
 from .base import BaseAgent, AgentResult, AgentConfig
+import os
 
 class ManagementAgent(BaseAgent):
     """
@@ -9,7 +10,7 @@ class ManagementAgent(BaseAgent):
 
     def __init__(self, config: Optional[AgentConfig] = None):
         super().__init__(name="management_agent", config=config)
-        self.target_collections = ["management", "general"]
+        self.target_collections = ["management"]
 
     async def execute(
         self,
@@ -39,17 +40,15 @@ class ManagementAgent(BaseAgent):
             management_keywords = context.get("management_keywords", "")
 
         # 1. 장점 관련 문서 검색
-        positive_base_query = f"{company_name} 경영진 대표 CEO 임원 이사 부사장 상무 전무 부장 팀장 관리자 리더십 좋음 우수함 뛰어남 소통 잘함 원활 개방적 의사결정 빠름 합리적 공정 투명 비전 명확 방향성 확실 전략적 사고 장기적 관점 직원 배려 인재 중시 성장 지원 혁신적 사고 변화 추진력 문제해결 능력 판단력 좋음 결단력 있음 책임감 강함 신뢰할 만함 존경스러움 역량 있음 경험 풍부 전문성 높음 카리스마 있음 동기부여 잘함"
+        positive_base_query = f"경영진, 리더십, 소통, 비전, 혁신"
         
         if management_keywords.strip():
-            positive_documents = await self.retrieve_knowledge_with_keywords(
-                base_query=positive_base_query,
-                user_keywords=f"{company_name} {management_keywords} 좋음 긍정적 장점",
-                context=context,
+            positive_documents = await self.retrieve_knowledge(
+                query=f" {management_keywords}",
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="pros",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         else:
             positive_documents = await self.retrieve_knowledge(
@@ -57,21 +56,19 @@ class ManagementAgent(BaseAgent):
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="pros",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
 
         # 2. 단점 관련 문서 검색
-        negative_base_query = f"{company_name} 경영진 대표 CEO 임원 이사 부사장 상무 전무 부장 팀장 관리자 리더십 부족 나쁨 미흡 소통 안됨 부족 폐쇄적 의사결정 느림 불합리 불공정 불투명 비전 불명확 방향성 없음 근시안적 사고 단기적 관점 직원 무시 인재 경시 성장 방해 보수적 사고 변화 거부 문제해결 능력 부족 판단력 부족 우유부단 책임회피 신뢰 못함 실망스러움 역량 부족 경험 부족 전문성 낮음 카리스마 없음 동기부여 못함 갑질 권위적 독선적 편파적 정치적 파벌 만들기"
+        negative_base_query = f"경영진, 소통부족, 불투명, 보수적, 책임회피"
         
         if management_keywords.strip():
-            negative_documents = await self.retrieve_knowledge_with_keywords(
-                base_query=negative_base_query,
-                user_keywords=f"{company_name} {management_keywords} 나쁨 부정적 단점",
-                context=context,
+            negative_documents = await self.retrieve_knowledge(
+                query=f" {management_keywords}",
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="cons",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         else:
             negative_documents = await self.retrieve_knowledge(
@@ -79,7 +76,7 @@ class ManagementAgent(BaseAgent):
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="cons",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
 
         # 3. 문서 존재 여부 확인
@@ -95,7 +92,9 @@ class ManagementAgent(BaseAgent):
         if positive_documents:
             strengths_prompt = f"""
 다음은 {company_name}의 경영진/관리진 장점과 관련된 실제 긍정적 리뷰 데이터입니다.
-이 데이터를 바탕으로 {company_name}의 경영진/관리진 **장점**을 5~7개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이 데이터를 바탕으로 {company_name}의 경영진/관리진 **장점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이때 반복적으로 언급되고 많이 나타나는 내용위주로 정리해주고 취합해줘
+목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 경영진/관리진 관련 결정을 내리는 데 도움을 주는 것입니다.
 
 **출력 형식:**
 JSON 객체 형태로만 출력하세요.
@@ -147,7 +146,9 @@ JSON 객체 형태로만 출력하세요.
         if negative_documents:
             weaknesses_prompt = f"""
 다음은 {company_name}의 경영진/관리진 단점과 관련된 실제 부정적 리뷰 데이터입니다.
-이 데이터를 바탕으로 {company_name}의 경영진/관리진 **단점**을 5~7개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이 데이터를 바탕으로 {company_name}의 경영진/관리진 **단점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이때 반복적으로 언급되고 많이 나타나는 내용위주로 정리해주고 취합해줘
+목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 경영진/관리진 관련 결정을 내리는 데 도움을 주는 것입니다.
 
 **출력 형식:**
 JSON 객체 형태로만 출력하세요.

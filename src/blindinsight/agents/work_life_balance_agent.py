@@ -17,6 +17,7 @@ BlindInsight AI - 업무와 삶의 균형 분석 전문 에이전트
 from typing import Any, Dict, List, Optional
 from ..models.user import UserProfile
 from .base import BaseAgent, AgentResult, AgentConfig
+import os
 
 
 class WorkLifeBalanceAgent(BaseAgent):
@@ -34,7 +35,7 @@ class WorkLifeBalanceAgent(BaseAgent):
         super().__init__(name="work_life_balance_agent", config=config)
         
         # 전문 컬렉션 설정 (업무와 삶의 균형 + 일반)
-        self.target_collections = ["work_life_balance", "general"]
+        self.target_collections = ["work_life_balance"]
     
     async def execute(
         self, 
@@ -86,17 +87,15 @@ class WorkLifeBalanceAgent(BaseAgent):
             worklife_keywords = context.get("worklife_keywords", "")
         
         # 1. 장점 관련 문서 검색 (긍정적 내용)
-        positive_base_query = f"{company_name} 워라밸 업무시간 정시퇴근 야근 없음 주말근무 없음 유연근무 재택근무 하이브리드 탄력근무 휴가 활용 쉬움 연차 자유롭게 휴가제도 좋음 개인시간 보장 프라이빗 시간 충분 개인생활 존중 가족시간 보장 취미활동 시간 여가시간 충분 스트레스 적음 업무강도 적정 일과 삶 조화 건강한 근무환경 퇴근 후 자유 업무 압박 적음 충분한 휴식 여유로운 일정 개인시간 확보"
+        positive_base_query = f"워라밸, 정시퇴근, 유연근무, 휴가활용, 개인시간보장"
         
         if worklife_keywords.strip():
-            positive_documents = await self.retrieve_knowledge_with_keywords(
-                base_query=positive_base_query,
-                user_keywords=f"{company_name} {worklife_keywords} 좋음 긍정적 장점",
-                context=context,
+            positive_documents = await self.retrieve_knowledge(
+                query=f" {worklife_keywords}",
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="pros",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         else:
             positive_documents = await self.retrieve_knowledge(
@@ -104,21 +103,19 @@ class WorkLifeBalanceAgent(BaseAgent):
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="pros",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         
         # 2. 단점 관련 문서 검색 (부정적 내용)
-        negative_base_query = f"{company_name} 워라밸 나쁨 업무시간 길음 야근 많음 늦은 퇴근 주말근무 토요일 출근 일요일 출근 유연근무 없음 재택근무 불가 하이브리드 안됨 휴가 사용 어려움 연차 눈치 휴가제도 나쁨 개인시간 부족 프라이빗 시간 없음 개인생활 침해 가족시간 부족 취미활동 못함 여가시간 없음 스트레스 많음 업무강도 높음 일과 삶 불균형 피곤함 번아웃 과로 업무 압박 심함 휴식 부족 바쁜 일정 개인시간 확보 어려움 회식 강요 업무 연락 퇴근 후에도"
+        negative_base_query = f"야근, 주말근무, 휴가어려움, 개인시간부족, 번아웃"
         
         if worklife_keywords.strip():
-            negative_documents = await self.retrieve_knowledge_with_keywords(
-                base_query=negative_base_query,
-                user_keywords=f"{company_name} {worklife_keywords} 나쁨 부정적 단점",
-                context=context,
+            negative_documents = await self.retrieve_knowledge(
+                query=f" {worklife_keywords}",
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="cons",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         else:
             negative_documents = await self.retrieve_knowledge(
@@ -126,7 +123,7 @@ class WorkLifeBalanceAgent(BaseAgent):
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="cons",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         
 
@@ -144,7 +141,10 @@ class WorkLifeBalanceAgent(BaseAgent):
         if positive_documents:
             strengths_prompt = f"""
 다음은 {company_name}의업무와 삶의 균형 장점과 관련된 실제 부정적 리뷰 데이터입니다.  
-이 데이터를 바탕으로 {company_name}의업무와 삶의 균형 **장점**을 5~7개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이 데이터를 바탕으로 {company_name}의업무와 삶의 균형 **장점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이때 반복적으로 언급되고 많이 나타나는 내용위주로 정리해주고 취합해줘
+목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 워라밸 관련 결정을 내리는 데 도움을 주는 것입니다.
+
 
 **출력 형식:**
 JSON 객체 형태로만 출력하세요.
@@ -196,7 +196,9 @@ JSON 객체 형태로만 출력하세요.
         if negative_documents:
             weaknesses_prompt = f"""
 다음은 {company_name}의업무와 삶의 균형 단점과 관련된 실제 부정적 리뷰 데이터입니다.  
-이 데이터를 바탕으로 {company_name}의업무와 삶의 균형 **단점**을 5~7개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이 데이터를 바탕으로 {company_name}의업무와 삶의 균형 **단점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이때 반복적으로 언급되고 많이 나타나는 내용위주로 정리해주고 취합해줘
+목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 워라밸 관련 결정을 내리는 데 도움을 주는 것입니다.
 
 **출력 형식:**
 JSON 객체 형태로만 출력하세요.

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from ..models.user import UserProfile
 from .base import BaseAgent, AgentResult, AgentConfig
 import logging
+import os
 
 
 
@@ -36,7 +37,7 @@ class CompanyCultureAgent(BaseAgent):
         super().__init__(name="company_culture_agent", config=config)
         
         # 전문 컬렉션 설정 (사내 문화 + 일반)
-        self.target_collections = ["company_culture", "general"]
+        self.target_collections = ["company_culture"]
     
     async def execute(
         self, 
@@ -90,17 +91,15 @@ class CompanyCultureAgent(BaseAgent):
             culture_keywords = context.get("culture_keywords", "")
         
         # 1. 장점 관련 문서 검색 (긍정적 내용)
-        positive_base_query = f"{company_name} 사내문화 조직문화 회사분위기 좋음 분위기 좋은 직원들 사이 좋음 동료관계 화목 팀워크 좋음 소통 원활 수평적 문화 개방적 분위기 자유로운 의견개진 창의적 업무환경 혁신적 문화 도전정신 격려 실수 용인 학습문화 성장지향 다양성 존중 포용적 문화 공정한 평가 투명한 경영 신뢰문화 존중문화 협력적 분위기 즐거운 업무환경 재미있는 직장 활기찬 분위기 긍정적 에너지 친근한 상사 배려하는 동료 서로 도움 상호존중 편안한 분위기 스트레스 적은 인간적인 회사"
+        positive_base_query = f"사내문화, 소통원활, 팀워크, 수평적문화, 상호존중"
         
         if culture_keywords.strip():
-            positive_documents = await self.retrieve_knowledge_with_keywords(
-                base_query=positive_base_query,
-                user_keywords=f"{company_name} {culture_keywords} 좋음 긍정적 장점",
-                context=context,
+            positive_documents = await self.retrieve_knowledge(
+                query=f" {culture_keywords}",
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="pros",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         else:
             positive_documents = await self.retrieve_knowledge(
@@ -108,21 +107,19 @@ class CompanyCultureAgent(BaseAgent):
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="pros",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         
         # 2. 단점 관련 문서 검색 (부정적 내용)
-        negative_base_query = f"{company_name} 사내문화 조직문화 회사분위기 나쁨 분위기 안좋음 직원들 사이 나쁨 동료관계 갈등 팀워크 안됨 소통 부족 수직적 문화 폐쇄적 분위기 경직된 문화 보수적 분위기 권위적 문화 갑질 문화 괴롭힘 따돌림 차별 편파적 평가 불투명한 경영 불신문화 경쟁적 분위기 스트레스 많은 업무환경 삭막한 직장 무기력한 분위기 부정적 에너지 까다로운 상사 이기적인 동료 도움 안줌 상호불신 경직된 분위기 스트레스 많은 인간관계 복잡 정치적 회사문화 파벌 인맥 중시"
+        negative_base_query = f"조직문화, 갈등, 권위적문화, 차별, 불투명경영"
         
         if culture_keywords.strip():
-            negative_documents = await self.retrieve_knowledge_with_keywords(
-                base_query=negative_base_query,
-                user_keywords=f"{company_name} {culture_keywords} 나쁨 부정적 단점",
-                context=context,
+            negative_documents = await self.retrieve_knowledge(
+                query=f" {culture_keywords}",
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="cons",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         else:
             negative_documents = await self.retrieve_knowledge(
@@ -130,7 +127,7 @@ class CompanyCultureAgent(BaseAgent):
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="cons",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         
         
@@ -148,7 +145,9 @@ class CompanyCultureAgent(BaseAgent):
         if positive_documents:
             strengths_prompt = f"""
 다음은 {company_name}의 사내 문화 장점과 관련된 실제 긍정적 리뷰 데이터입니다.  
-이 데이터를 바탕으로 {company_name}의 사내 문화 **장점**을 5~7개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이 데이터를 바탕으로 {company_name}의 사내 문화 **장점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이때 반복적으로 언급되고 많이 나타나는 내용위주로 정리해주고 취합해줘
+목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 사내 문화 관련 결정을 내리는 데 도움을 주는 것입니다.
 
 **출력 형식:**
 JSON 객체 형태로만 출력하세요.
@@ -200,7 +199,9 @@ JSON 객체 형태로만 출력하세요.
         if negative_documents:
             weaknesses_prompt = f"""
 다음은 {company_name}의 사내 문화 단점과 관련된 실제 부정적 리뷰 데이터입니다.  
-이 데이터를 바탕으로 {company_name}의 사내 문화 **단점**을 5~7개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이 데이터를 바탕으로 {company_name}의 사내 문화 **단점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.
+이때 반복적으로 언급되고 많이 나타나는 내용위주로 정리해주고 취합해줘
+목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 사내 문화 관련 결정을 내리는 데 도움을 주는 것입니다.
 
 **출력 형식:**
 JSON 객체 형태로만 출력하세요.

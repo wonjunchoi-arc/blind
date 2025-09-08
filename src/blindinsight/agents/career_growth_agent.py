@@ -17,6 +17,7 @@ BlindInsight AI - 커리어 향상 분석 전문 에이전트
 from typing import Any, Dict, List, Optional
 from ..models.user import UserProfile
 from .base import BaseAgent, AgentResult, AgentConfig
+import os
 
 
 class CareerGrowthAgent(BaseAgent):
@@ -34,7 +35,7 @@ class CareerGrowthAgent(BaseAgent):
         super().__init__(name="career_growth_agent", config=config)
         
         # 전문 컬렉션 설정 (커리어 향상 + 일반)
-        self.target_collections = ["career_growth", "general"]
+        self.target_collections = ["career_growth"]
     
     async def execute(
         self, 
@@ -87,17 +88,15 @@ class CareerGrowthAgent(BaseAgent):
             growth_keywords = context.get("growth_keywords", "")
         
         # 1. 장점 관련 문서 검색 (긍정적 내용)
-        positive_base_query = f"{company_name} 커리어 향상 승진 성장 발전 기회 교육 지원 스킬업 역량개발 프로모션 승격 인사평가 좋음 성과평가 공정 멘토링 코칭 세미나 교육과정 외부교육 내부교육 사내교육 자격증 지원 학위 지원 경력개발 전문성 향상 직무역량 리더십 개발 관리자 양성 경력경로 명확 로드맵 체계적 인재개발 잠재력 개발"
+        positive_base_query = f"커리어향상, 승진, 역량개발, 교육지원, 성과평가"
         
         if growth_keywords.strip():
-            positive_documents = await self.retrieve_knowledge_with_keywords(
-                base_query=positive_base_query,
-                user_keywords=f"{company_name} {growth_keywords} 좋음 긍정적 장점",
-                context=context,
+            positive_documents = await self.retrieve_knowledge(
+                query=f" {growth_keywords}",
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="pros",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         else:
             positive_documents = await self.retrieve_knowledge(
@@ -105,21 +104,19 @@ class CareerGrowthAgent(BaseAgent):
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="pros",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         
         # 2. 단점 관련 문서 검색 (부정적 내용)
-        negative_base_query = f"{company_name} 커리어 향상 승진 어려움 성장 한계 발전 제한 교육 부족 지원 없음 스킬업 기회 없음 역량개발 미흡 프로모션 막힘 승격 힘듦 인사평가 불공정 성과평가 편파적 멘토링 없음 코칭 부재 교육과정 부실 외부교육 제한 사내교육 형식적 자격증 지원 없음 학위 지원 없음 경력개발 체계 없음 전문성 향상 기회 제한 직무역량 개발 미흡 리더십 개발 프로그램 없음 경력경로 불명확 로드맵없음 인재개발소홀 잠재력무시 성장정체 경력막힘"
+        negative_base_query = f"승진어려움, 성장한계, 교육부족, 지원없음"
         
         if growth_keywords.strip():
-            negative_documents = await self.retrieve_knowledge_with_keywords(
-                base_query=negative_base_query,
-                user_keywords=f"{company_name} {growth_keywords} 나쁨 부정적 단점",
-                context=context,
+            negative_documents = await self.retrieve_knowledge(
+                query=f" {growth_keywords}",
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="cons",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
         else:
             negative_documents = await self.retrieve_knowledge(
@@ -127,11 +124,9 @@ class CareerGrowthAgent(BaseAgent):
                 collections=self.target_collections,
                 company_name=company_name,
                 content_type_filter="cons",
-                k=10
+                k=int(os.getenv("DEFAULT_SEARCH_K", "10"))
             )
-        
-        print('부정적 커리어',negative_documents)
-        
+                
         # 3. 문서 존재 여부 확인
         if not positive_documents and not negative_documents:
             return {
@@ -146,7 +141,9 @@ class CareerGrowthAgent(BaseAgent):
         if positive_documents:
             strengths_prompt = f"""
 다음은 {company_name}의 커리어 향상 장점과 관련된 실제 긍정적 리뷰 데이터입니다.  
-이 데이터를 바탕으로 {company_name}의 커리어 향상 **장점**을 5~7개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.  
+이 데이터를 바탕으로 {company_name}의 커리어 향상 **장점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.  
+이때 반복적으로 언급되고 많이 나타나는 내용위주로 정리해주고 취합해줘
+목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 커리어 향상 관련 결정을 내리는 데 도움을 주는 것입니다.
 
 **출력 형식:**  
 JSON 객체 형태로만 출력하세요.  
@@ -198,7 +195,10 @@ JSON 객체 형태로만 출력하세요.
         if negative_documents:
             weaknesses_prompt = f"""
 다음은 {company_name}의 커리어 향상 단점과 관련된 실제 부정적 리뷰 데이터입니다.  
-이 데이터를 바탕으로 {company_name}의 커리어 향상 **단점**을 5~7개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.  
+이 데이터를 바탕으로 {company_name}의 커리어 향상 **단점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.  
+이때 반복적으로 언급되고 많이 나타나는 내용위주로 정리해주고 취합해줘
+목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 커리어 향상 관련 결정을 내리는 데 도움을 주는 것입니다.
+
 
 **출력 형식:**  
 JSON 객체 형태로만 출력하세요.  

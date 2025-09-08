@@ -511,7 +511,7 @@ class BlindInsightApp:
                         if positions and len(positions) > 0:
                             st.session_state[pos_key] = ["선택 안함"] + sorted([p for p in positions if p and p.strip()])
                         else:
-                            st.session_state[pos_key] = ["선택 안함", f"{company}에 직무 데이터 없음"]
+                            st.session_state[pos_key] = ["선택 안함", "💡 직무 데이터 없음"]
                     except Exception as e:
                         logger.error(f"직무({company}) prefetch 오류: {str(e)}")
                         st.session_state[pos_key] = ["선택 안함", "로딩 실패"]
@@ -523,7 +523,7 @@ class BlindInsightApp:
                         if years and len(years) > 0:
                             st.session_state[year_key] = ["선택 안함"] + sorted([str(y) for y in years if y], reverse=True)
                         else:
-                            st.session_state[year_key] = ["선택 안함", f"{company}에 연도 데이터 없음"]
+                            st.session_state[year_key] = ["선택 안함", "💡 연도 데이터 없음"]
                     except Exception as e:
                         logger.error(f"연도({company}) prefetch 오류: {str(e)}")
                         st.session_state[year_key] = ["선택 안함", "로딩 실패"]
@@ -546,14 +546,21 @@ class BlindInsightApp:
                 st.caption("실제 분석 가능")
         else:
             st.warning("⚠️ DB에 회사 데이터가 없습니다")
-            st.info("💡 먼저 migrate_reviews.py 스크립트를 실행하여 데이터를 마이그레이션해주세요")
-            st.markdown("**마이그레이션 방법:**\n```bash\npython migrate_reviews.py\n```")
-            company_name = st.text_input(
-                "⚠️ 임시 회사명 입력 (데이터 없음)",
-                placeholder="데이터가 없어 분석 결과가 제한될 수 있습니다",
-                key="company_search_no_data",
-                help="실제 분석을 위해서는 먼저 데이터 마이그레이션 필요"
-            )
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.info("💡 먼저 migrate_reviews.py 스크립트를 실행하여 데이터를 마이그레이션해주세요")
+                st.markdown("**마이그레이션 방법:**\n```bash\npython migrate_reviews.py\n```")
+                company_name = st.text_input(
+                    "⚠️ 임시 회사명 입력 (데이터 없음)",
+                    placeholder="데이터가 없어 분석 결과가 제한될 수 있습니다",
+                    key="company_search_no_data",
+                    help="실제 분석을 위해서는 먼저 데이터 마이그레이션 필요"
+                )
+            with col2:
+                st.markdown("### 📊 데이터 상태")
+                st.info("💡 migrate_reviews.py를 실행하면 자동으로 메타데이터가 수집됩니다")
+                st.markdown("**데이터 마이그레이션 명령어:**")
+                st.code("python migrate_reviews.py", language="bash")
 
         if company_name:
             tab1, tab2, tab3 = st.tabs(["📋 커뮤니티", "ℹ️ 회사 정보", "🤖 AI 분석"])
@@ -688,7 +695,7 @@ class BlindInsightApp:
                                     logger.info(f"SQLite DB에서 {company_name}의 직무 {len(available_positions)}개 로드됨")
                                 else:
                                     # 해당 회사에 직무 데이터가 없음
-                                    position_options = ["선택 안함", f"{company_name}에 직무 데이터 없음"]
+                                    position_options = ["선택 안함", "💡 직무 데이터 없음"]
                                     logger.warning(f"{company_name}에 직무 데이터가 없습니다")
                                 
                                 st.session_state[cache_key] = position_options
@@ -705,7 +712,7 @@ class BlindInsightApp:
                 position_options = st.session_state.get(cache_key, ["선택 안함"])
                 
                 # 실제 직무 개수 계산 (메시지 제외)
-                actual_positions = [pos for pos in position_options if pos not in ["선택 안함", f"{company_name}에 직무 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]]
+                actual_positions = [pos for pos in position_options if pos not in ["선택 안함", "💡 직무 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]]
                 position_count = len(actual_positions)
                 
                 selected_position = st.selectbox(
@@ -733,7 +740,7 @@ class BlindInsightApp:
                                     logger.info(f"SQLite DB에서 {company_name}의 연도 {len(available_years)}개 로드됨")
                                 else:
                                     # 해당 회사에 연도 데이터가 없음
-                                    year_options = ["선택 안함", f"{company_name}에 연도 데이터 없음"]
+                                    year_options = ["선택 안함", "💡 연도 데이터 없음"]
                                     logger.warning(f"{company_name}에 연도 데이터가 없습니다")
                                 
                                 st.session_state[cache_key] = year_options
@@ -750,7 +757,7 @@ class BlindInsightApp:
                 year_options = st.session_state.get(cache_key, ["선택 안함"])
                 
                 # 실제 연도 개수 계산 (메시지 제외)
-                actual_years = [year for year in year_options if year not in ["선택 안함", f"{company_name}에 연도 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]]
+                actual_years = [year for year in year_options if year not in ["선택 안함", "💡 연도 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]]
                 year_count = len(actual_years)
                 
                 selected_year = st.selectbox(
@@ -812,14 +819,14 @@ class BlindInsightApp:
                 
                 # 직무 유효성 검증
                 if selected_position and selected_position != "선택 안함":
-                    if selected_position not in [f"{company_name}에 직무 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]:
+                    if selected_position not in ["💡 직무 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]:
                         final_position = selected_position
                     else:
                         st.warning(f"⚠️ 선택한 직무가 유효하지 않습니다: {selected_position}")
                 
                 # 연도 유효성 검증
                 if selected_year and selected_year != "선택 안함":
-                    if selected_year not in [f"{company_name}에 연도 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]:
+                    if selected_year not in ["💡 연도 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]:
                         final_year = selected_year
                     else:
                         st.warning(f"⚠️ 선택한 연도가 유효하지 않습니다: {selected_year}")

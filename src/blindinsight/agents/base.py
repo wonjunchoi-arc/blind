@@ -80,14 +80,14 @@ class AgentConfig(BaseModel):
     
     # LLM 설정 - OpenAI 모델 관련
     model_name: str = "gpt-4o-mini-2024-07-18"  # 사용할 GPT 모델명
-    temperature: float = 0.3  # 응답 창의성 (0.0: 일관성, 1.0: 창의성)
+    temperature: float = 0.4  # 응답 창의성 (0.0: 일관성, 1.0: 창의성)
     max_tokens: int = 4000  # 최대 생성 토큰 수
     timeout: int = 60  # API 호출 타임아웃 (초)
     
     # RAG 검색 설정 - ChromaDB 벡터 검색
     max_retrievals: int = 50  # 검색할 최대 문서 수
-    relevance_threshold: float = 0.2  # 관련성 점수 임계값 (0.0~1.0)  
-    enable_reranking: bool = False  # 재순위 매김 활성화
+    relevance_threshold: float = 0.3  # 관련성 점수 임계값 (0.0~1.0)  
+    enable_reranking: bool = True  # 재순위 매김 활성화
     keyword_match_threshold: float = 0.005  # 키워드 매칭 임계값 (0.0~1.0)
     
     # 성능 최적화 설정
@@ -217,7 +217,7 @@ class BaseAgent(ABC):
         🔍 RAG 시스템을 사용한 관련 지식 검색 (멀티 컬렉션 지원)
         
         🏗️ RAG 검색 과정:
-        1. 쿼리를 임베딩 벡터로 변환 (OpenAI text-embedding-3-large)
+        1. 쿼리를 임베딩 벡터로 변환 (OpenAI text-embedding-3-small)
         2. 지정된 컬렉션들에서 병렬 검색 수행
         3. 유사도 점수가 임계값 이상인 문서만 필터링
         4. 회사별 필터링 적용 (선택적)
@@ -229,13 +229,11 @@ class BaseAgent(ABC):
         - management: 경영진/관리 관련 (상사, 리더십, 의사결정)
         - salary_benefits: 연봉 및 복리후생 (급여, 보너스, 복지)
         - career_growth: 커리어 성장 (승진, 교육, 발전기회)
-        - general: 일반적인 회사 정보
         
         Args:
-            query: 검색할 질문 (예: "구글 워라밸 어때?")
+            query: 검색할 질문 (예: "구글 워라밸 어때?" 또는 키워드 포함 "구글 워라밸 수평적 자율적")
             collections: 검색할 컬렉션 목록 (예: ["company_culture", "general"])
             company_name: 회사명 필터 (예: "구글")
-            sentiment_filter: 감정 필터 ("positive", "negative", "neutral")
             content_type_filter: 내용 타입 필터 ("pros", "cons")
             position_filter: 직무 필터 (예: "IT 디자이너")
             year_filter: 연도 필터 (예: "2024")
@@ -249,7 +247,6 @@ class BaseAgent(ABC):
         
         k = k or self.config.max_retrievals
         collections = collections or ["general"]
-        
         
         try:
             filters = {}
@@ -287,7 +284,6 @@ class BaseAgent(ABC):
                 content_hash = hash(result.document.page_content[:100])
 
                 if result.relevance_score < self.config.relevance_threshold:
-                    print('이거 되냐?')
                     print(
                         f"relevance_score={result.relevance_score:.4f} "
                         f"threshold={self.config.relevance_threshold} "
@@ -306,120 +302,6 @@ class BaseAgent(ABC):
             
         except Exception:
             return []
-    
-    async def retrieve_knowledge_with_keywords(
-        self, 
-        base_query: str,
-        user_keywords: str = "",
-        context: Dict[str, Any] = None,
-        **kwargs
-    ) -> List[Document]:
-        """
-        🔍 키워드 우선순위 적용 RAG 검색 (retrieve_knowledge 패턴 차용)
-        
-        사용자가 입력한 키워드가 포함된 문서에 더 높은 우선순위를 부여하여
-        더 정확하고 맞춤형 검색 결과를 제공합니다.
-        
-        📊 검색 과정:
-        1. 키워드 전용 검색 수행 (가중치 1.5배)
-        2. 기본 쿼리 검색 수행 (가중치 1.0배)  
-        3. 결과 병합 및 중복 제거
-        4. 가중치 적용 후 점수 기준 정렬
-        5. 상위 k개 문서 반환
-        
-        Args:
-            base_query: 기본 검색 쿼리 (예: "카카오 company culture 분석")
-            user_keywords: 사용자 입력 키워드 (예: "수평적, 자율적")
-            context: 검색 컨텍스트 (회사명, 카테고리 등)
-            **kwargs: 추가 검색 옵션
-            
-        Returns:
-            검색 결과 Document 리스트 (키워드 우선순위 적용됨)
-        """
-        
-        if not user_keywords or not user_keywords.strip():
-            return await self.retrieve_knowledge(base_query, **kwargs)
-        
-        if not self.rag_retriever:
-            return []
-        
-        context = context or {}
-        company_name = context.get("company_name") or kwargs.get("company_name")
-        collections = kwargs.get("collections") or ["general"] 
-        k = kwargs.get("k") or self.config.max_retrievals
-        
-        try:
-            # retrieve_knowledge와 동일한 필터 구성
-            filters = {}
-            if company_name:
-                filters["company"] = company_name
-            if kwargs.get("content_type_filter"):
-                filters["content_type"] = kwargs["content_type_filter"]
-            if kwargs.get("position_filter"):
-                filters["position"] = kwargs["position_filter"]
-            if kwargs.get("year_filter"):
-                filters["review_year"] = kwargs["year_filter"]
-            
-            # 키워드별 검색 수행 (retrieve_knowledge 패턴과 동일)
-            all_results = []
-            
-            # 1. 키워드 검색 (높은 가중치)
-            for collection_name in collections:
-                try:
-                    collection_k = (k // len(collections)) * 2 + 5  # 키워드용으로 더 많이
-                    keyword_results = await self.rag_retriever.search(
-                        query=user_keywords,
-                        collection_name=collection_name,
-                        k=collection_k,
-                        filters=filters,
-                        search_type="ensemble"
-                    )
-                    # 키워드 결과에 1.5배 가중치
-                    for result in keyword_results:
-                        result.relevance_score *= 1.5
-                    all_results.extend(keyword_results)
-                except Exception:
-                    continue
-            
-            # 2. 기본 쿼리 검색 (기본 가중치)
-            for collection_name in collections:
-                try:
-                    collection_k = k // len(collections) + 2
-                    base_results = await self.rag_retriever.search(
-                        query=base_query,
-                        collection_name=collection_name,
-                        k=collection_k,
-                        filters=filters,
-                        search_type="ensemble"
-                    )
-                    all_results.extend(base_results)
-                except Exception:
-                    continue
-            
-            # 중복 제거 및 필터링 (retrieve_knowledge와 동일한 패턴)
-            documents = []
-            seen_contents = set()
-            sorted_results = sorted(all_results, key=lambda x: x.relevance_score, reverse=True)
-            
-            for result in sorted_results:
-                content_hash = hash(result.document.page_content[:100])
-                if result.relevance_score < self.config.relevance_threshold:
-                    # threshold 미달 → 탈락
-                    
-                    continue  # ⬅️ 건너뛰기
-
-                if (content_hash not in seen_contents and 
-                    result.relevance_score >= self.config.relevance_threshold):
-                    seen_contents.add(content_hash)
-                    documents.append(result.document)
-                    if len(documents) >= k:
-                        break
-            
-            return documents
-            
-        except Exception:
-            # 오류시 기본 retrieve_knowledge로 폴백
-            return await self.retrieve_knowledge(base_query, **kwargs)
     
     async def call_mcp_service(
         self, 
