@@ -2,7 +2,7 @@
 BlindInsight AI 메인 애플리케이션
 
 Streamlit 기반의 메인 웹 애플리케이션으로,
-회사 분석, 커리어 상담, 데이터 시각화 기능을 제공합니다.
+회사 분석, AI 검색, 데이터 시각화 기능을 제공합니다.
 """
 
 import streamlit as st
@@ -90,7 +90,7 @@ class BlindInsightApp:
     BlindInsight AI 메인 애플리케이션 클래스
     
     Streamlit 기반의 웹 인터페이스를 제공하며,
-    회사 분석, 커리어 상담, 데이터 시각화 기능을 통합합니다.
+    회사 분석, AI 검색, 데이터 시각화 기능을 통합합니다.
     """
     
     def __init__(self):
@@ -344,7 +344,7 @@ class BlindInsightApp:
         st.markdown("""
         <div style='text-align: center; padding: 1rem; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); border-radius: 10px; margin-bottom: 2rem;'>
             <h1 style='color: white; margin: 0;'>🔍 BlindInsight AI</h1>
-            <p style='color: #f0f0f0; margin: 0.5rem 0 0 0;'>AI 기반 회사 분석 및 커리어 상담 플랫폼</p>
+            <p style='color: #f0f0f0; margin: 0.5rem 0 0 0;'>AI 기반 회사 분석 및 AI 검색 플랫폼</p>
         </div>
         """, unsafe_allow_html=True)
     
@@ -357,7 +357,7 @@ class BlindInsightApp:
             # 페이지 선택
             self.current_page = st.selectbox(
                 "페이지 선택",
-                ["홈", "회사 분석", "커리어 상담", "데이터 탐색", "설정"],
+                ["홈", "회사 분석", "AI 검색"],
                 index=0
             )
             
@@ -396,12 +396,8 @@ class BlindInsightApp:
             self._render_home_page()
         elif self.current_page == "회사 분석":
             self._render_company_analysis_page()
-        elif self.current_page == "커리어 상담":
-            self._render_career_consultation_page()
-        elif self.current_page == "데이터 탐색":
-            self._render_data_exploration_page()
-        elif self.current_page == "설정":
-            self._render_settings_page()
+        elif self.current_page == "AI 검색":
+            self._blind_AI_page()
     
     def _render_home_page(self):
         """홈 페이지 렌더링"""
@@ -423,7 +419,7 @@ class BlindInsightApp:
             - **성장 기회**: 회사의 안정성과 성장 가능성 분석
             - **면접 정보**: 실제 면접 후기와 준비 팁 제공
             
-            #### 💼 개인화된 커리어 상담
+            #### 💼 개인화된 AI 검색
             - **맞춤형 추천**: 개인 프로필 기반 최적 회사 추천
             - **스킬 갭 분석**: 목표 포지션을 위한 필요 역량 분석
             - **커리어 로드맵**: 단계별 경력 발전 전략 제시
@@ -451,12 +447,8 @@ class BlindInsightApp:
                 st.session_state.current_page = "회사 분석"
                 st.rerun()
             
-            if st.button("💬 커리어 상담 시작", use_container_width=True):
-                st.session_state.current_page = "커리어 상담"
-                st.rerun()
-            
-            if st.button("📊 데이터 탐색", use_container_width=True):
-                st.session_state.current_page = "데이터 탐색"
+            if st.button("💬 AI 검색 시작", use_container_width=True):
+                st.session_state.current_page = "AI 검색"
                 st.rerun()
     
     def _render_company_analysis_page(self):
@@ -915,6 +907,9 @@ class BlindInsightApp:
             # 병렬 실행을 위한 태스크 준비
             tasks = []
             for agent_name, agent in agents.items():
+                if not agent_name:
+                    logger.warning("에이전트 이름이 None입니다. 건너뜁니다.")
+                    continue
                 query = f"{company_name} {agent_name.replace('_', ' ')} 분석"
                 logger.info(f"{agent_name} 에이전트 태스크 준비: {query}")
                 
@@ -1250,348 +1245,303 @@ class BlindInsightApp:
             st.write("이 에이전트의 분석을 다시 시도해보세요.")
     
     
-    def _render_career_consultation_page(self):
-        """커리어 상담 페이지 렌더링"""
+    def _blind_AI_page(self):
+        """블라인드 AI 페이지 렌더링 - Supervisor 채팅 시스템"""
         
-        st.markdown("## 💼 AI 커리어 상담")
+        st.markdown("## 🤖 AI 상담 (Supervisor System)")
         
-        # 채팅 인터페이스
-        self._render_chat_interface()
+        # 채팅 시스템 상태 체크
+        if not self.knowledge_base or not st.session_state.get("knowledge_base_initialized", False):
+            st.error("⚠️ 지식베이스가 초기화되지 않았습니다. 홈 페이지에서 초기화를 완료해주세요.")
+            return
+        
+        # 채팅 시스템 소개
+        with st.expander("💡 AI 상담 시스템 소개", expanded=False):
+            st.markdown("""
+            **🧠 Supervisor 기반 지능형 채팅**
+            
+            이 채팅 시스템은 다음과 같이 동작합니다:
+            
+            1. **질문 분석**: AI가 사용자 질문의 의도와 키워드를 분석
+            2. **전문가 선택**: 5개 전문 에이전트 중 최적의 에이전트 선택
+               - 💰 연봉/복지 전문가
+               - 🏢 기업문화 전문가  
+               - ⚖️ 워라밸 전문가
+               - 👥 경영진 전문가
+               - 📈 커리어 성장 전문가
+            3. **맞춤 분석**: 실제 리뷰 데이터를 기반으로 맞춤형 답변 생성
+            4. **품질 검토**: AI가 답변 품질을 검토하여 필요시 재생성
+            
+            **🎯 사용 예시:**
+            - "삼성전자 초봉 얼마야?"
+            - "네이버 회사 문화 어때?"
+            - "카카오 워라밸 좋은가요?"
+            """)
+        
+        # 채팅 인터페이스 렌더링
+        self._render_supervisor_chat_interface()
     
-    def _render_chat_interface(self):
-        """채팅 인터페이스 렌더링"""
+    def _render_supervisor_chat_interface(self):
+        """Supervisor 채팅 시스템 인터페이스"""
+        
+        # 세션 상태 초기화
+        if "supervisor_chat_messages" not in st.session_state:
+            st.session_state.supervisor_chat_messages = []
+        
+        if "supervisor_chat_session_id" not in st.session_state:
+            st.session_state.supervisor_chat_session_id = None
+        
+        if "chat_selected_company" not in st.session_state:
+            st.session_state.chat_selected_company = None
+        
+        # 회사 선택 UI
+        st.markdown("### 🏢 분석 대상 회사 선택")
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            # 회사 목록 로드 (회사 분석 페이지와 동일한 로직)
+            if "available_companies" not in st.session_state:
+                with st.spinner("회사 목록 로딩 중..."):
+                    try:
+                        companies = asyncio.run(self.knowledge_base.get_available_companies())
+                        if companies and len(companies) > 0:
+                            st.session_state.available_companies = sorted(companies)
+                        else:
+                            st.session_state.available_companies = []
+                    except Exception as e:
+                        logger.error(f"회사명 로딩 실패: {str(e)}")
+                        st.session_state.available_companies = []
+            
+            available_companies = st.session_state.get("available_companies", [])
+            
+            if available_companies and len(available_companies) > 0:
+                selected_company = st.selectbox(
+                    "분석하고 싶은 회사를 선택하세요",
+                    options=["전체 회사"] + available_companies,
+                    key="chat_company_selector",
+                    help="선택한 회사의 데이터만 검색하여 더 정확한 답변을 제공합니다"
+                )
+                
+                # 선택된 회사 저장
+                if selected_company != "전체 회사":
+                    st.session_state.chat_selected_company = selected_company
+                else:
+                    st.session_state.chat_selected_company = None
+                    
+            else:
+                st.warning("⚠️ 사용 가능한 회사 데이터가 없습니다")
+                st.session_state.chat_selected_company = None
+        
+        with col2:
+            if st.session_state.chat_selected_company:
+                st.success(f"✅ 선택된 회사:\n**{st.session_state.chat_selected_company}**")
+            else:
+                st.info("💡 전체 데이터에서 검색")
+        
+        st.markdown("---")
         
         # 채팅 히스토리 표시
-        if "chat_messages" not in st.session_state:
-            st.session_state.chat_messages = []
-        
-        # 채팅 메시지 컨테이너
         chat_container = st.container()
         
         with chat_container:
-            for message in st.session_state.chat_messages:
+            for message in st.session_state.supervisor_chat_messages:
                 with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
+                    if message["role"] == "assistant" and "metadata" in message:
+                        # AI 답변에 메타데이터 표시
+                        st.markdown(message["content"])
+                        
+                        # 답변 메타데이터 (접힌 상태로)
+                        with st.expander("📊 분석 정보", expanded=False):
+                            metadata = message["metadata"]
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                agent_type = metadata.get("agent_type") or "unknown"
+                                st.metric("🎯 전문가", agent_type.replace("_", " ").title())
+                                st.metric("🏢 검색 범위", metadata.get("search_scope", "전체 회사"))
+                            
+                            with col2:
+                                st.metric("🔄 재시도", f"{metadata.get('retry_count', 0)}회")
+                                st.metric("📊 품질점수", f"{metadata.get('quality_score', 0)}점")
+                            
+                            with col3:
+                                st.metric("⚡ 실행시간", f"{metadata.get('execution_time', 0):.1f}초")
+                                st.metric("📚 참고문서", f"{metadata.get('rag_documents_count', 0)}개")
+                            
+                            if metadata.get("company_filter") and metadata.get("company_filter") != "전체":
+                                st.write("🎯 **분석 대상:**", metadata.get("company_filter"))
+                    else:
+                        st.markdown(message["content"])
         
         # 사용자 입력
-        user_input = st.chat_input("커리어 관련 질문을 입력하세요...")
+        user_input = st.chat_input("궁금한 회사나 질문을 입력하세요... (예: '삼성전자 초봉 얼마야?')")
         
         if user_input:
             # 사용자 메시지 추가
-            st.session_state.chat_messages.append({
+            st.session_state.supervisor_chat_messages.append({
                 "role": "user",
                 "content": user_input
             })
             
-            # AI 응답 생성 (시뮬레이션)
-            ai_response = self._generate_ai_response(user_input)
+            # AI 응답 생성 (Supervisor 시스템 사용)
+            with st.spinner("🤖 AI 분석 중... (질문 분석 → 전문가 선택 → 데이터 검색 → 답변 생성 → 품질 검토)"):
+                ai_response_data = asyncio.run(self._generate_supervisor_response(user_input))
             
             # AI 응답 추가
-            st.session_state.chat_messages.append({
-                "role": "assistant", 
-                "content": ai_response
+            st.session_state.supervisor_chat_messages.append({
+                "role": "assistant",
+                "content": ai_response_data["response"],
+                "metadata": ai_response_data.get("metadata", {})
             })
             
+            # 세션 ID 저장
+            if ai_response_data.get("session_id"):
+                st.session_state.supervisor_chat_session_id = ai_response_data["session_id"]
+            
             st.rerun()
+        
+        # 채팅 초기화 버튼 (사이드바)
+        with st.sidebar:
+            if st.button("🗑️ 채팅 기록 초기화"):
+                st.session_state.supervisor_chat_messages = []
+                st.session_state.supervisor_chat_session_id = None
+                st.success("채팅 기록이 초기화되었습니다!")
+                st.rerun()
+            
+            # 현재 세션 정보
+            if st.session_state.supervisor_chat_session_id:
+                st.info(f"**세션 ID:** {st.session_state.supervisor_chat_session_id}")
     
-    def _generate_ai_response(self, user_input: str) -> str:
-        """AI 응답 생성 (시뮬레이션)"""
-        
-        # 실제 환경에서는 LLM API를 호출하여 응답 생성
-        # 여기서는 간단한 키워드 기반 응답 제공
-        
-        user_input_lower = user_input.lower()
-        
-        if "연봉" in user_input_lower or "급여" in user_input_lower:
-            return """
-**💰 연봉 관련 조언**
-
-연봉 협상에서 중요한 포인트들을 알려드릴게요:
-
-1. **시장 조사**: 같은 포지션의 업계 평균 연봉을 파악하세요
-2. **성과 어필**: 구체적인 성과와 기여도를 수치로 제시하세요  
-3. **타이밍**: 성과 평가 시기나 프로젝트 완료 후가 좋습니다
-4. **총 보상**: 기본급 외에 복리후생, 스톡옵션도 고려하세요
-
-더 구체적인 상황을 알려주시면 맞춤형 조언을 드릴 수 있어요!
-            """
-        
-        elif "이직" in user_input_lower or "전직" in user_input_lower:
-            return """
-**🚀 이직 전략 가이드**
-
-성공적인 이직을 위한 단계별 가이드입니다:
-
-**준비 단계 (1-2개월)**
-- 포트폴리오 업데이트
-- 이력서 및 자기소개서 작성
-- 목표 회사 리스트 작성
-
-**실행 단계 (1-3개월)**  
-- 적극적인 지원 및 네트워킹
-- 면접 준비 및 실전 연습
-- 레퍼런스 확보
-
-**마무리 단계**
-- 처우 협상
-- 원만한 퇴사 진행
-
-어떤 단계에서 도움이 필요하신지 알려주세요!
-            """
-        
-        elif "면접" in user_input_lower:
-            return """
-**🎯 면접 준비 가이드**
-
-면접 성공을 위한 핵심 팁들입니다:
-
-**기술 면접 준비**
-- 기본 CS 지식 복습
-- 코딩 테스트 연습 (알고리즘, 자료구조)
-- 프로젝트 경험 정리 및 심화 질문 대비
-
-**인성 면접 준비**
-- 회사 및 직무 연구
-- STAR 기법으로 경험 정리
-- 역질문 준비
-
-**실전 팁**
-- 모의 면접 연습
-- 복장 및 태도 점검
-- 면접 후 감사 메일 발송
-
-특정 회사나 포지션에 대한 면접 정보가 필요하시면 알려주세요!
-            """
-        
-        else:
-            return """
-안녕하세요! BlindInsight AI 커리어 상담사입니다. 🤖
-
-다음과 같은 주제로 도움을 드릴 수 있습니다:
-
-• **연봉 협상** 및 보상 패키지 분석
-• **이직 전략** 및 커리어 로드맵 설계  
-• **면접 준비** 및 회사별 면접 정보
-• **스킬 개발** 방향 및 학습 계획
-• **회사 문화** 및 조직 분석
-
-구체적인 질문이나 상황을 알려주시면 더 정확한 조언을 드릴 수 있어요!
-            """
-    
-    def _render_data_exploration_page(self):
-        """데이터 탐색 페이지 렌더링"""
-        
-        st.markdown("## 📊 데이터 탐색")
-        
-        if not self.knowledge_base:
-            st.warning("지식 베이스가 초기화되지 않았습니다.")
-            return
-        
-        # 검색 인터페이스
-        search_query = st.text_input("검색어를 입력하세요", placeholder="예: 워라밸, 연봉, 승진...")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            company_filter = st.text_input("회사명 필터", placeholder="특정 회사만 검색")
-        
-        with col2:
-            category_filter = st.selectbox("카테고리", ["전체", "문화", "연봉", "커리어", "면접"])
-        
-        with col3:
-            result_count = st.slider("결과 개수", 5, 50, 10)
-        
-        # 검색 실행
-        if st.button("🔍 검색") and search_query:
-            with st.spinner("검색 중..."):
-                results = asyncio.run(self._perform_search(
-                    search_query, company_filter, category_filter, result_count
-                ))
-                
-                if results:
-                    self._display_search_results(results)
-    
-    async def _perform_search(self, query: str, company: str, category: str, count: int):
-        """검색 실행"""
+    async def _generate_supervisor_response(self, user_question: str) -> Dict[str, Any]:
+        """Modern Supervisor를 사용한 AI 응답 생성"""
         
         try:
-            if not self.knowledge_base:
-                return []
+            # Modern Supervisor 직접 import
+            from ..chat.modern_supervisor import ModernSupervisorAgent
+            import time
             
-            # 카테고리 매핑
-            category_map = {
-                "전체": None,
-                "문화": "culture",
-                "연봉": "salary", 
-                "커리어": "career",
-                "면접": "interview"
+            # Supervisor 인스턴스 생성
+            supervisor = ModernSupervisorAgent()
+            
+            # 기존 세션 ID가 있다면 재사용, 없으면 새로 생성
+            session_id = st.session_state.get("supervisor_chat_session_id")
+            if not session_id:
+                import uuid
+                session_id = f"chat_{uuid.uuid4().hex[:8]}"
+                st.session_state.supervisor_chat_session_id = session_id
+            
+            logger.info(f"Modern Supervisor 채팅 시작: {user_question[:50]}... (세션: {session_id})")
+            
+            # 채팅 실행 시작 시간 기록
+            start_time = time.time()
+            
+            # 선택된 회사 가져오기
+            selected_company = st.session_state.get("chat_selected_company")
+            
+            # Modern Supervisor 채팅 실행 (선택된 회사를 RAG 필터로 전달)
+            context = {
+                "frontend": "streamlit",
+                "user_profile": SessionManager.get_user_profile().__dict__
             }
             
-            results = await self.knowledge_base.search(
-                query=query,
-                company_name=company if company else None,
-                category=category_map.get(category),
-                k=count
+            # 선택된 회사가 있으면 RAG 필터로 추가
+            if selected_company:
+                context["company_filter"] = selected_company
+                logger.info(f"RAG 필터로 회사 설정: {selected_company}")
+            else:
+                logger.info("전체 회사 데이터에서 검색")
+            
+            result = await supervisor.chat(
+                user_question=user_question,
+                session_id=session_id,
+                context=context
             )
             
-            return results
+            # 실행 시간 계산
+            execution_time = time.time() - start_time
             
+            if result.get("success", False):
+                logger.info(f"Modern Supervisor 응답 성공: {execution_time:.2f}초")
+                
+                # 메타데이터 보강
+                metadata = result.get("metadata", {})
+                metadata.update({
+                    "agent_type": result.get("metadata", {}).get("selected_expert", "unknown"),
+                    "execution_time": execution_time,
+                    "session_id": session_id,
+                    "supervisor_system": "modern_supervisor",
+                    "quality_score": result.get("metadata", {}).get("quality_score", 0),
+                    "retry_count": result.get("metadata", {}).get("retry_count", 0),
+                    "rag_documents_count": result.get("metadata", {}).get("total_messages", 0),
+                    "company_filter": selected_company if selected_company else "전체",
+                    "search_scope": f"{selected_company} 전용" if selected_company else "전체 회사"
+                })
+                
+                return {
+                    "success": True,
+                    "response": result.get("response", "응답을 생성할 수 없습니다."),
+                    "session_id": session_id,
+                    "metadata": metadata
+                }
+            else:
+                # Modern Supervisor에서 실패한 경우
+                error_msg = result.get("error", "알 수 없는 오류")
+                logger.error(f"Modern Supervisor 실패: {error_msg}")
+                
+                return {
+                    "success": False,
+                    "response": f"""죄송합니다. AI 분석 중 오류가 발생했습니다.
+
+**오류 정보:** {error_msg}
+
+**다시 시도해보세요:**
+- 다른 표현으로 질문해보세요
+- 구체적인 회사명을 포함해보세요
+- '삼성전자 연봉 어때?', '네이버 회사 문화 어때?' 같은 형식으로 질문해보세요
+
+**지원되는 질문 유형:**
+- 💰 연봉, 급여, 복리후생 관련 질문
+- 🏢 회사 문화, 조직 분위기 관련 질문
+- ⚖️ 워라밸, 근무 환경 관련 질문  
+- 👥 경영진, 리더십 관련 질문
+- 📈 커리어 성장, 승진 관련 질문""",
+                    "metadata": {
+                        "error_occurred": True,
+                        "error_message": error_msg,
+                        "execution_time": execution_time,
+                        "session_id": session_id,
+                        "supervisor_system": "modern_supervisor"
+                    }
+                }
+        
         except Exception as e:
-            st.error(f"검색 중 오류: {str(e)}")
-            return []
+            logger.error(f"Modern Supervisor 시스템 오류: {str(e)}")
+            
+            # 완전 실패 시 폴백 응답
+            return {
+                "success": False,
+                "response": f"""죄송합니다. AI 채팅 시스템에 기술적 오류가 발생했습니다.
+
+**오류 내용:** {str(e)}
+
+**해결 방법:**
+1. 🔄 페이지를 새로고침(F5) 해주세요
+2. 🏠 홈 페이지에서 시스템 상태를 확인해주세요  
+3. 📊 '회사 분석' 페이지의 AI 분석 기능을 대신 이용해주세요
+
+**임시 대안:**
+회사 분석 페이지에서 회사를 직접 선택하여 더 상세한 AI 분석을 받으실 수 있습니다.
+
+**기술 지원:**
+지속적인 문제 발생 시 시스템 관리자에게 문의해주세요.""",
+                "metadata": {
+                    "error_occurred": True,
+                    "fallback_used": True,
+                    "error_message": str(e),
+                    "supervisor_system": "modern_supervisor_fallback"
+                }
+            }
     
-    def _display_search_results(self, results: List):
-        """검색 결과 표시"""
-        
-        st.markdown(f"### 🔍 검색 결과 ({len(results)}개)")
-        
-        for i, result in enumerate(results):
-            with st.expander(f"결과 {i+1} - 유사도: {result.score:.2f}"):
-                
-                # 메타데이터 표시
-                metadata = result.metadata
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.write(f"**회사**: {metadata.get('company_name', '알 수 없음')}")
-                with col2:
-                    st.write(f"**카테고리**: {metadata.get('category', '일반')}")
-                with col3:
-                    st.write(f"**날짜**: {metadata.get('created_at', '알 수 없음')}")
-                
-                # 내용 표시
-                st.markdown("**내용:**")
-                st.write(result.content)
-    
-    def _render_settings_page(self):
-        """설정 페이지 렌더링"""
-        
-        st.markdown("## ⚙️ 설정")
-        
-        # 사용자 프로필 편집
-        self._render_user_profile_editor()
-        
-        st.markdown("---")
-        
-        # 시스템 설정
-        self._render_system_settings()
-    
-    def _render_user_profile_editor(self):
-        """사용자 프로필 편집기 렌더링"""
-        
-        st.markdown("### 👤 사용자 프로필")
-        
-        current_profile = SessionManager.get_user_profile()
-        
-        with st.form("user_profile_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                name = st.text_input("이름", value=current_profile.name or "")
-                experience_years = st.number_input(
-                    "경력 연수", 
-                    min_value=0, 
-                    max_value=50, 
-                    value=current_profile.experience_years
-                )
-                education = st.selectbox(
-                    "학력",
-                    ["고등학교", "전문대", "대학교", "대학원"],
-                    index=2 if current_profile.education_level.value == "bachelor" else 0
-                )
-            
-            with col2:
-                current_position = st.text_input(
-                    "현재 직책", 
-                    value=current_profile.current_position or ""
-                )
-                current_company = st.text_input(
-                    "현재 회사", 
-                    value=current_profile.current_company or ""
-                )
-                location = st.text_input(
-                    "지역", 
-                    value=current_profile.location_preferences[0].value if current_profile.location_preferences else ""
-                )
-            
-            # 관심 분야
-            st.markdown("**관심 분야 (쉼표로 구분)**")
-            interests = st.text_area(
-                "관심 분야",
-                value=current_profile.target_position or "",
-                height=100
-            )
-            
-            # 저장 버튼
-            if st.form_submit_button("💾 프로필 저장"):
-                # 프로필 업데이트 (실제 구현에서는 UserProfile 객체 생성)
-                st.success("프로필이 저장되었습니다!")
-    
-    def _render_system_settings(self):
-        """시스템 설정 렌더링"""
-        
-        st.markdown("### 🔧 시스템 설정")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**데이터 소스 설정**")
-            
-            # 데이터 소스 활성화/비활성화
-            enable_blind = st.checkbox("Blind 데이터", value=True)
-            enable_jobsites = st.checkbox("채용 사이트 데이터", value=True)
-            enable_news = st.checkbox("뉴스 데이터", value=False)
-            
-            if st.button("🔄 데이터 새로고침"):
-                with st.spinner("데이터를 새로고침하는 중..."):
-                    # 실제로는 MCP를 통해 데이터 동기화
-                    asyncio.run(asyncio.sleep(2))  # 시뮬레이션
-                    st.success("데이터 새로고침 완료!")
-        
-        with col2:
-            st.markdown("**분석 설정**")
-            
-            # 분석 관련 설정
-            analysis_depth = st.selectbox(
-                "분석 깊이",
-                ["빠른 분석", "상세 분석", "전문가 분석"],
-                index=1
-            )
-            
-            include_sentiment = st.checkbox("감정 분석 포함", value=True)
-            include_trends = st.checkbox("트렌드 분석 포함", value=True)
-            
-            if st.button("💾 설정 저장"):
-                st.success("설정이 저장되었습니다!")
-        
-        # 시스템 통계
-        st.markdown("---")
-        st.markdown("### 📊 시스템 통계")
-        
-        if self.knowledge_base:
-            stats = self.knowledge_base.get_statistics()
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric(
-                    "저장된 문서", 
-                    stats.get("knowledge_base", {}).get("total_documents", 0)
-                )
-            
-            with col2:
-                st.metric(
-                    "검색 요청", 
-                    stats.get("performance", {}).get("search_queries", 0)
-                )
-            
-            with col3:
-                cache_stats = stats.get("embedding_cache", {})
-                hit_rate = cache_stats.get("hit_rate", 0) * 100
-                st.metric("캐시 적중률", f"{hit_rate:.1f}%")
-            
-            with col4:
-                st.metric("평균 응답 시간", "0.8초")
 
 
 def run_app():

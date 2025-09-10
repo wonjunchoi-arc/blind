@@ -203,6 +203,247 @@ class BaseAgent(ABC):
         """
         pass
     
+    async def execute_as_supervisor_tool(
+        self,
+        user_question: str,
+        supervisor_prompt: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        새로운 Supervisor Tool 워크플로우:
+        1. 사용자 질문에서 키워드 추출 및 RAG 검색
+        2. 문서 존재 여부 확인
+        3. Supervisor 프롬프트 + RAG 결과로 LLM 응답 생성
+        4. AI 품질 평가 (향후 구현)
+        
+        Args:
+            user_question: 사용자의 원본 질문
+            supervisor_prompt: Supervisor가 생성한 맞춤형 프롬프트
+            context: 추가 컨텍스트 정보
+            
+        Returns:
+            str: 사용자 친화적인 답변 텍스트
+        """
+        try:
+            print(f"[{self.name}] ===== execute_as_supervisor_tool 시작 =====")
+            print(f"[{self.name}] 사용자 질문: {user_question}")
+            print(f"[{self.name}] Supervisor 프롬프트 존재: {bool(supervisor_prompt)}")
+            if supervisor_prompt:
+                print(f"[{self.name}] Supervisor 프롬프트: {supervisor_prompt[:200]}...")
+            print(f"[{self.name}] 컨텍스트: {context}")
+            
+            # 1. 키워드 추출 및 회사명 파싱
+            company_name = self._extract_company_name(user_question)
+            keywords = self._extract_keywords(user_question)
+            
+            print(f"[{self.name}] 추출된 정보 - 회사: {company_name}, 키워드: {keywords}")
+            
+            # 2. RAG 검색 수행
+            print(f"[{self.name}] RAG 검색 시작...")
+            rag_documents = await self._perform_rag_search(
+                user_question=user_question,
+                company_name=company_name,
+                keywords=keywords,
+                context=context
+            )
+            
+            # 3. 문서 존재 여부 확인
+            if not rag_documents:
+                print(f"[{self.name}] RAG 검색 결과 없음")
+                return f"죄송합니다. '{company_name or '해당 회사'}'에 대한 {self.name} 관련 정보를 찾을 수 없습니다."
+            
+            print(f"[{self.name}] RAG 검색 완료: {len(rag_documents)}개 문서 발견")
+            
+            # 문서 미리보기 출력
+            for i, doc in enumerate(rag_documents[:3]):
+                content_preview = doc.page_content[:150].replace('\n', ' ')
+                print(f"[{self.name}] 문서 {i+1}: {content_preview}...")
+            
+            # 4. Supervisor 프롬프트가 있으면 사용, 없으면 기본 프롬프트
+            if supervisor_prompt and supervisor_prompt.strip():
+                final_prompt = supervisor_prompt
+                print(f"[{self.name}] Supervisor 커스텀 프롬프트 사용")
+            else:
+                # 기본 프롬프트 생성
+                final_prompt = self._generate_default_prompt(user_question, company_name)
+                print(f"[{self.name}] 기본 프롬프트 사용")
+            
+            print(f"[{self.name}] 최종 프롬프트: {final_prompt[:300]}...")
+            
+            # 5. LLM 응답 생성 (RAG 문서 + 프롬프트)
+            print(f"[{self.name}] LLM 응답 생성 시작...")
+            response = await self.generate_response(
+                prompt=final_prompt,
+                context_documents=rag_documents,
+                temperature=0.7,
+                max_tokens=4000
+            )
+            
+            print(f"[{self.name}] LLM 응답 생성 완료: {len(response) if response else 0}자")
+            if response:
+                print(f"[{self.name}] 응답 미리보기: {response[:200]}...")
+            
+            # 6. 응답 후처리
+            if response and response.strip():
+                final_response = response.strip()
+                print(f"[{self.name}] ===== execute_as_supervisor_tool 완료 =====")
+                return final_response
+            else:
+                print(f"[{self.name}] 빈 응답 받음")
+                return f"죄송합니다. {self.name}에서 적절한 답변을 생성할 수 없습니다."
+                
+        except Exception as e:
+            print(f"[{self.name}] execute_as_supervisor_tool 오류: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return f"분석 중 오류가 발생했습니다: {str(e)}"
+    
+    def _extract_company_name(self, text: str) -> Optional[str]:
+        """텍스트에서 회사명 추출 (간단한 패턴 매칭)"""
+        # 자주 언급되는 회사명 패턴
+        companies = [
+            "삼성", "삼성전자", "네이버", "카카오", "구글", "애플", "마이크로소프트", 
+            "토스", "당근마켓", "쿠팡", "배달의민족", "우아한형제들", "LG", "LG전자",
+            "SK", "현대", "롯데", "신세계", "CJ", "포스코", "한국전력", "KT", "KT&G"
+        ]
+        
+        text_upper = text.upper()
+        for company in companies:
+            if company.upper() in text_upper:
+                return company
+        
+        return None
+    
+    def _extract_keywords(self, text: str) -> str:
+        """사용자 질문에서 키워드 추출"""
+        # 간단한 키워드 추출 로직
+        keywords = []
+        
+        # 도메인별 키워드 매핑
+        keyword_mapping = {
+            # 연봉/복지 관련
+            "salary_benefits": ["연봉", "급여", "월급", "초봉", "보너스", "인센티브", "복지", "복리후생", "연차", "휴가", "보험", "지원금"],
+            # 문화 관련  
+            "company_culture": ["문화", "분위기", "조직문화", "기업문화", "팀워크", "소통", "자유로운", "수평적", "수직적"],
+            # 워라밸 관련
+            "work_life_balance": ["워라밸", "야근", "야업", "근무시간", "퇴근시간", "휴가", "휴일", "유연근무", "재택근무"],
+            # 경영진 관련
+            "management": ["상사", "팀장", "임원", "경영진", "리더십", "관리", "의사결정", "승진"],
+            # 성장 관련
+            "career_growth": ["성장", "승진", "교육", "발전", "기회", "커리어", "스킬업", "학습", "트레이닝"]
+        }
+        
+        # 현재 에이전트 타입에 맞는 키워드 찾기
+        name = getattr(self, 'name', '') or ''
+        agent_type = name.replace('_agent', '')
+        if agent_type in keyword_mapping:
+            for keyword in keyword_mapping[agent_type]:
+                if keyword in text:
+                    keywords.append(keyword)
+        
+        # 일반적인 키워드도 추가
+        common_keywords = ["좋은", "나쁜", "어떤", "어때", "장점", "단점", "괜찮은", "만족", "불만"]
+        for keyword in common_keywords:
+            if keyword in text:
+                keywords.append(keyword)
+        
+        return ", ".join(keywords) if keywords else ""
+    
+    async def _perform_rag_search(
+        self,
+        user_question: str,
+        company_name: Optional[str],
+        keywords: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        """RAG 검색 수행"""
+        try:
+            # 검색 쿼리 구성
+            if keywords:
+                search_query = f"{company_name or ''} {keywords}".strip()
+            else:
+                search_query = user_question
+            
+            # 에이전트별 전문 컬렉션 사용
+            collections = getattr(self, 'target_collections', ['general'])
+            
+            print(f"[{self.name}] 검색 쿼리: '{search_query}'")
+            print(f"[{self.name}] 대상 컬렉션: {collections}")
+            print(f"[{self.name}] 회사명 필터: {company_name}")
+            
+            # RAG 검색 수행
+            documents = await self.retrieve_knowledge(
+                query=search_query,
+                collections=collections,
+                company_name=company_name,
+                k=15  # 좀 더 많은 문서 검색
+            )
+            
+            print(f"[{self.name}] RAG 검색 결과: {len(documents)}개 문서")
+            return documents
+            
+        except Exception as e:
+            print(f"[{self.name}] RAG 검색 실패: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def _generate_default_prompt(self, user_question: str, company_name: Optional[str]) -> str:
+        """기본 프롬프트 생성 (Supervisor 프롬프트가 없을 때)"""
+        company_text = company_name or "해당 회사"
+        
+        return f"""
+다음은 {company_text}에 대한 실제 리뷰 데이터입니다.
+이 데이터를 바탕으로 사용자의 질문 "{user_question}"에 대해 구체적이고 도움이 되는 답변을 제공해주세요.
+
+답변 시 다음 사항을 고려해주세요:
+1. 실제 리뷰 데이터에 근거한 구체적인 내용으로 답변
+2. 장점과 단점을 균형있게 제시
+3. 사용자가 의사결정에 도움이 될 수 있도록 명확하게 설명
+4. 한국어로 자연스럽고 이해하기 쉽게 작성
+
+리뷰 데이터를 종합하여 답변해주세요.
+"""
+    
+    def _format_supervisor_response(self, result: Dict[str, Any], original_question: str) -> str:
+        """에이전트 결과를 사용자 친화적 텍스트로 변환"""
+        try:
+            # 결과에서 주요 정보 추출
+            if "summary" in result:
+                return result["summary"]
+            elif "final_summary" in result:
+                return result["final_summary"]
+            elif "analysis" in result:
+                return result["analysis"]
+            elif isinstance(result, str):
+                return result
+            else:
+                # 구조화된 결과를 텍스트로 변환
+                parts = []
+                
+                if "strengths" in result:
+                    strengths = result["strengths"]
+                    if isinstance(strengths, dict):
+                        pros = strengths.get("pros", [])
+                        if pros:
+                            parts.append("**장점:**")
+                            for pro in pros[:3]:  # 상위 3개만
+                                parts.append(f"• {pro}")
+                
+                if "weaknesses" in result:
+                    weaknesses = result["weaknesses"]
+                    if isinstance(weaknesses, dict):
+                        cons = weaknesses.get("cons", [])
+                        if cons:
+                            parts.append("\n**단점:**")
+                            for con in cons[:3]:  # 상위 3개만
+                                parts.append(f"• {con}")
+                
+                return "\n".join(parts) if parts else f"{self.name}의 분석이 완료되었습니다."
+                
+        except Exception:
+            return f"{self.name}의 분석 결과를 표시할 수 없습니다."
+    
     async def retrieve_knowledge(
         self, 
         query: str, 
@@ -259,11 +500,16 @@ class BaseAgent(ABC):
             if year_filter:
                 filters["review_year"] = year_filter
             
+            print(f"[{self.name}] retrieve_knowledge - 필터: {filters}")
+            print(f"[{self.name}] retrieve_knowledge - 요청 문서수: {k}")
+            
             # 멀티 컬렉션에서 검색 수행
             all_results = []
             for collection_name in collections:
                 try:
                     collection_k = k // len(collections) + 2
+                    print(f"[{self.name}] '{collection_name}' 컬렉션에서 {collection_k}개 문서 검색...")
+                    
                     search_results = await self.rag_retriever.search(
                         query=query,
                         collection_name=collection_name,
@@ -271,8 +517,10 @@ class BaseAgent(ABC):
                         filters=filters,
                         search_type="ensemble"
                     )
+                    print(f"[{self.name}] '{collection_name}' 검색 결과: {len(search_results)}개")
                     all_results.extend(search_results)
-                except Exception:
+                except Exception as e:
+                    print(f"[{self.name}] '{collection_name}' 컬렉션 검색 실패: {str(e)}")
                     continue
             
             # 중복 제거 및 필터링
@@ -348,7 +596,7 @@ class BaseAgent(ABC):
         **kwargs
     ) -> str:
         """
-        🤖 LLM을 사용한 응답 생성 (RAG + LLM 통합)
+        🤖 LLM을 사용한 응답 생성 (RAG + LLM 통합) 고정형
         
         🔄 생성 과정:
         1. RAG 문서가 있으면 컨텍스트로 구성
