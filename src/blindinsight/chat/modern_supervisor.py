@@ -12,12 +12,6 @@ import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-# LangSmith 비활성화(선택)
-os.environ["LANGCHAIN_TRACING_V2"] = "false"
-os.environ["LANGCHAIN_ENDPOINT"] = ""
-os.environ["LANGCHAIN_API_KEY"] = ""
-os.environ["LANGCHAIN_PROJECT"] = ""
-
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 

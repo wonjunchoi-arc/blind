@@ -16,11 +16,8 @@ import os
 from pathlib import Path
 import logging
 
-# LangSmith 비활성화 (LangGraph 추적 비활성화)
-os.environ["LANGCHAIN_TRACING_V2"] = "false"
-os.environ["LANGCHAIN_ENDPOINT"] = ""
-os.environ["LANGCHAIN_API_KEY"] = ""
-os.environ["LANGCHAIN_PROJECT"] = ""
+from dotenv import load_dotenv
+load_dotenv()
 
 # 프로젝트 루트 경로 추가
 project_root = Path(__file__).parent

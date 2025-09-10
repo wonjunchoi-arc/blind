@@ -9,6 +9,7 @@ import streamlit as st
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
@@ -24,6 +25,7 @@ from blindinsight.rag.knowledge_base import KnowledgeBase
 from blindinsight.mcp.client import MCPClient
 from blindinsight.mcp.providers import BlindDataProvider, DataProviderConfig
 from blindinsight.models.base import settings
+
 
 # 로깅 설정
 logging.basicConfig(
@@ -429,27 +431,30 @@ class BlindInsightApp:
         with col2:
             st.markdown("### 📈 시스템 현황")
             
-            # 시스템 통계 (샘플 데이터)
+            # 시스템 통계
             if self.knowledge_base:
                 stats = self.knowledge_base.get_statistics()
                 
+                # 회사 목록 로드 (회사 분석 페이지와 동일한 로직)
+                if "available_companies" not in st.session_state:
+                    try:
+                        companies = asyncio.run(self.knowledge_base.get_available_companies())
+                        if companies and len(companies) > 0:
+                            st.session_state.available_companies = sorted(companies)
+                        else:
+                            st.session_state.available_companies = []
+                    except Exception as e:
+                        logger.error(f"홈 화면 회사명 로딩 실패: {str(e)}")
+                        st.session_state.available_companies = []
+                
+                available_company_count = len(st.session_state.get("available_companies", []))
+                
                 # 메트릭 카드들
-                st.metric("분석 가능한 회사", len(st.session_state.get("selected_companies", [])) + 50)
+                st.metric("분석 가능한 회사", available_company_count)
                 st.metric("수집된 리뷰", stats.get("knowledge_base", {}).get("total_documents", 0))
                 st.metric("처리된 분석 요청", stats.get("performance", {}).get("search_queries", 0))
             
             st.markdown("---")
-            
-            # 빠른 시작 버튼들
-            st.markdown("### 🎬 빠른 시작")
-            
-            if st.button("🔍 회사 분석 시작", use_container_width=True):
-                st.session_state.current_page = "회사 분석"
-                st.rerun()
-            
-            if st.button("💬 AI 검색 시작", use_container_width=True):
-                st.session_state.current_page = "AI 검색"
-                st.rerun()
     
     def _render_company_analysis_page(self):
         """회사 분석 페이지 렌더링 - 진입시 회사/직무/연도 모두 프리패치"""
@@ -877,6 +882,13 @@ class BlindInsightApp:
         keywords: Optional[Dict[str, str]] = None
     ) -> Dict:
         """5개의 전문 에이전트를 병렬로 실행하여 분석 수행"""
+        
+        # LangSmith 트레이싱 시작
+        analysis_start_time = time.time()
+        
+        # 성능 메트릭 초기화
+        agent_performance = {}
+        
         try:
             # 에이전트 import
             from ..agents.company_culture_agent import CompanyCultureAgent
@@ -920,11 +932,16 @@ class BlindInsightApp:
                 )
                 tasks.append((agent_name, task))
             
-            # 병렬 실행
+            # 병렬 실행 (개별 에이전트 성능 추적)
             logger.info(f"5개 에이전트 병렬 실행 시작: {company_name}")
-            results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
-            logger.info(f"5개 에이전트 병렬 실행 완료: {company_name}")
             
+            # 각 에이전트 실행 시작 시간 기록
+            execution_start_time = time.time()
+            results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
+            total_execution_time = time.time() - execution_start_time
+            
+            logger.info(f"5개 에이전트 병렬 실행 완료: {company_name} ({total_execution_time:.2f}초)")
+        
             # 결과 처리
             agent_results = {}
             for (agent_name, _), result in zip(tasks, results):
@@ -940,6 +957,12 @@ class BlindInsightApp:
                     logger.info(f"{agent_name} 에이전트 실행 결과: success={result.success if hasattr(result, 'success') else 'unknown'}")
                     if hasattr(result, 'result') and result.result:
                         logger.info(f"{agent_name} 분석 결과 요약: {str(result.result)[:200]}...")
+                    
+                    # 개별 에이전트 성능 메트릭 수집
+                    execution_time = result.execution_time if hasattr(result, 'execution_time') else 0.0
+                    confidence_score = result.confidence_score if hasattr(result, 'confidence_score') else 0.0
+              
+                    
                     agent_results[agent_name] = {
                         "success": result.success if hasattr(result, 'success') else False,
                         "result": result.result if hasattr(result, 'result') and result.success else None,
@@ -1541,7 +1564,7 @@ class BlindInsightApp:
             
             if result.get("success", False):
                 logger.info(f"Modern Supervisor 응답 성공: {execution_time:.2f}초")
-                
+
                 # 메타데이터 보강
                 metadata = result.get("metadata", {})
                 
