@@ -50,7 +50,7 @@ class ModernSupervisorAgent:
 
     def __init__(self):
         self.model = ChatOpenAI(
-            model="gpt-4o-mini-2024-07-18",
+            model=settings.supervisor_model,
             temperature=0.7,
             openai_api_key=settings.openai_api_key,
             parallel_tool_calls=False,  # ✅ 병렬 도구 호출 금지

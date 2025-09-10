@@ -1337,6 +1337,70 @@ class BlindInsightApp:
                 st.success(f"✅ 선택된 회사:\n**{st.session_state.chat_selected_company}**")
             else:
                 st.info("💡 전체 데이터에서 검색")
+                
+        # 연도 선택 UI (선택된 회사가 있을 때만 표시)
+        if st.session_state.chat_selected_company:
+            st.markdown("### 📅 분석 대상 연도 선택")
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                company_name = st.session_state.chat_selected_company
+                # 연도 목록 로드 (회사 분석 페이지와 동일한 로직)
+                year_cache_key = f"chat_years_{company_name}"
+                
+                if year_cache_key not in st.session_state:
+                    with st.spinner(f"{company_name} 연도 목록 로딩 중..."):
+                        try:
+                            if self.knowledge_base:
+                                available_years = asyncio.run(
+                                    self.knowledge_base.get_available_years(company_name)
+                                )
+                                
+                                if available_years and len(available_years) > 0:
+                                    year_options = ["전체 연도"] + sorted([str(year) for year in available_years if year], reverse=True)
+                                    logger.info(f"SQLite DB에서 {company_name}의 연도 {len(available_years)}개 로드됨")
+                                else:
+                                    year_options = ["전체 연도", "💡 연도 데이터 없음"]
+                                    logger.warning(f"{company_name}에 연도 데이터가 없습니다")
+                                
+                                st.session_state[year_cache_key] = year_options
+                            else:
+                                year_options = ["전체 연도", "지식베이스 연결 필요"]
+                                st.session_state[year_cache_key] = year_options
+                        except Exception as e:
+                            logger.error(f"{company_name} 연도 목록 로딩 실패: {str(e)}")
+                            year_options = ["전체 연도", "로딩 실패"]
+                            st.session_state[year_cache_key] = year_options
+                
+                # 캐시된 연도 옵션 가져오기
+                year_options = st.session_state.get(year_cache_key, ["전체 연도"])
+                
+                # 실제 연도 개수 계산 (메시지 제외)
+                actual_years = [year for year in year_options if year not in ["전체 연도", "💡 연도 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]]
+                year_count = len(actual_years)
+                
+                selected_year = st.selectbox(
+                    f"연도 선택 - {year_count}개 연도",
+                    year_options,
+                    key="chat_year_selector",
+                    help=f"{company_name} 회사의 실제 연도 목록입니다"
+                )
+                
+                # 선택된 연도 저장
+                if selected_year != "전체 연도" and selected_year not in ["💡 연도 데이터 없음", "지식베이스 연결 필요", "로딩 실패"]:
+                    st.session_state.chat_selected_year = selected_year
+                else:
+                    st.session_state.chat_selected_year = None
+                    
+            with col2:
+                if st.session_state.get("chat_selected_year"):
+                    st.success(f"✅ 선택된 연도:\n**{st.session_state.chat_selected_year}년**")
+                else:
+                    st.info("💡 전체 연도에서 검색")
+        else:
+            # 회사가 선택되지 않았을 때는 연도 선택 초기화
+            if "chat_selected_year" in st.session_state:
+                del st.session_state.chat_selected_year
         
         st.markdown("---")
         
@@ -1368,8 +1432,15 @@ class BlindInsightApp:
                                 st.metric("⚡ 실행시간", f"{metadata.get('execution_time', 0):.1f}초")
                                 st.metric("📚 참고문서", f"{metadata.get('rag_documents_count', 0)}개")
                             
+                            # 분석 대상 정보 표시
+                            filter_info = []
                             if metadata.get("company_filter") and metadata.get("company_filter") != "전체":
-                                st.write("🎯 **분석 대상:**", metadata.get("company_filter"))
+                                filter_info.append(f"회사: {metadata.get('company_filter')}")
+                            if metadata.get("year_filter") and metadata.get("year_filter") != "전체":
+                                filter_info.append(f"연도: {metadata.get('year_filter')}")
+                            
+                            if filter_info:
+                                st.write("🎯 **분석 대상:**", " | ".join(filter_info))
                     else:
                         st.markdown(message["content"])
         
@@ -1435,10 +1506,11 @@ class BlindInsightApp:
             # 채팅 실행 시작 시간 기록
             start_time = time.time()
             
-            # 선택된 회사 가져오기
+            # 선택된 회사와 연도 가져오기
             selected_company = st.session_state.get("chat_selected_company")
+            selected_year = st.session_state.get("chat_selected_year")
             
-            # Modern Supervisor 채팅 실행 (선택된 회사를 RAG 필터로 전달)
+            # Modern Supervisor 채팅 실행 (선택된 회사와 연도를 RAG 필터로 전달)
             context = {
                 "frontend": "streamlit",
                 "user_profile": SessionManager.get_user_profile().__dict__
@@ -1450,6 +1522,13 @@ class BlindInsightApp:
                 logger.info(f"RAG 필터로 회사 설정: {selected_company}")
             else:
                 logger.info("전체 회사 데이터에서 검색")
+                
+            # 선택된 연도가 있으면 RAG 필터로 추가
+            if selected_year:
+                context["year_filter"] = selected_year
+                logger.info(f"RAG 필터로 연도 설정: {selected_year}")
+            else:
+                logger.info("전체 연도 데이터에서 검색")
             
             result = await supervisor.chat(
                 user_question=user_question,
@@ -1465,6 +1544,21 @@ class BlindInsightApp:
                 
                 # 메타데이터 보강
                 metadata = result.get("metadata", {})
+                
+                # 검색 범위 구성
+                search_scope_parts = []
+                if selected_company:
+                    search_scope_parts.append(f"{selected_company} 회사")
+                else:
+                    search_scope_parts.append("전체 회사")
+                    
+                if selected_year:
+                    search_scope_parts.append(f"{selected_year}년")
+                else:
+                    search_scope_parts.append("전체 연도")
+                
+                search_scope = " | ".join(search_scope_parts)
+                
                 metadata.update({
                     "agent_type": result.get("metadata", {}).get("selected_expert", "unknown"),
                     "execution_time": execution_time,
@@ -1474,7 +1568,8 @@ class BlindInsightApp:
                     "retry_count": result.get("metadata", {}).get("retry_count", 0),
                     "rag_documents_count": result.get("metadata", {}).get("total_messages", 0),
                     "company_filter": selected_company if selected_company else "전체",
-                    "search_scope": f"{selected_company} 전용" if selected_company else "전체 회사"
+                    "year_filter": selected_year if selected_year else "전체",
+                    "search_scope": search_scope
                 })
                 
                 return {
