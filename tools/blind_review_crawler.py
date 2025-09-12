@@ -233,39 +233,51 @@ class BlindReviewCrawler:
                 # auth_text 형태 2: "현직원 · j********* · 하드웨어 엔지니어 - 2025.02.23"
                 
                 if '·' in auth_text:
-                    # 형태 2: · 구분자로 파싱
-                    auth_parts = [part.strip() for part in auth_text.split('·') if part.strip()]
+                    # 형태 2: · 구분자로 파싱 (개선된 방식)
+                    # 먼저 날짜 패턴을 찾아서 분리
+                    date_pattern = r'(\s*-\s*\d{4}\.\d{2}\.\d{2})$'
+                    date_match = re.search(date_pattern, auth_text)
                     
-                    if len(auth_parts) >= 1:
-                        # "Verified User\n현직원"에서 "현직원"만 추출
-                        raw_status = auth_parts[0].strip()
-                        if '\n' in raw_status:
-                            status = raw_status.split('\n')[-1].strip()  # 마지막 부분만 가져오기
-                        else:
-                            status = raw_status
-                    
-                    if len(auth_parts) >= 3:
-                        # 직무 정보는 마지막 부분에서 추출 (예: "생산엔지니어·생산관리 - 2024.02.06")
-                        job_date_part = auth_parts[2].strip()
+                    if date_match:
+                        # 날짜 부분과 나머지 분리
+                        date_part = date_match.group(1)
+                        remaining_text = auth_text[:date_match.start()]
                         
-                        # 날짜 부분 제거하고 직무만 추출
-                        if '-' in job_date_part:
-                            # 날짜 패턴을 찾아서 그 부분만 제거
-                            date_match = re.search(r'\s*-\s*\d{4}\.\d{2}\.\d{2}', job_date_part)
-                            if date_match:
-                                position = job_date_part[:date_match.start()].strip()
-                                # 연도 추출
-                                year_match = re.search(r'(\d{4})', date_match.group())
-                                if year_match:
-                                    year = year_match.group(1)
+                        # 연도 추출
+                        year_match = re.search(r'(\d{4})', date_part)
+                        if year_match:
+                            year = year_match.group(1)
+                        
+                        # 나머지 부분을 · 으로 split
+                        remaining_parts = [p.strip() for p in remaining_text.split('·') if p.strip()]
+                        
+                        if len(remaining_parts) >= 1:
+                            # 직원 상태 추출
+                            raw_status = remaining_parts[0].strip()
+                            if '\n' in raw_status:
+                                status = raw_status.split('\n')[-1].strip()
                             else:
-                                # 정규식으로 날짜 패턴 제거 (폴백 방식)
-                                position = re.sub(r'\s*-\s*\d{4}\.?\d{0,2}\.?\d{0,2}.*', '', job_date_part).strip()
-                                year_match = re.search(r'(\d{4})', job_date_part)
-                                if year_match:
-                                    year = year_match.group(1)
-                        else:
-                            position = job_date_part
+                                status = raw_status
+                        
+                        if len(remaining_parts) >= 3:
+                            # 직무는 세 번째부터 끝까지 모두 결합 (직무명에 · 포함 가능)
+                            position = '·'.join(remaining_parts[2:]).strip()
+                        elif len(remaining_parts) >= 2:
+                            # 사용자 ID 다음이 직무 (일반적인 경우)
+                            position = remaining_parts[2] if len(remaining_parts) > 2 else "정보 없음"
+                    else:
+                        # 날짜 패턴이 없는 경우 기존 방식 사용
+                        auth_parts = [part.strip() for part in auth_text.split('·') if part.strip()]
+                        
+                        if len(auth_parts) >= 1:
+                            raw_status = auth_parts[0].strip()
+                            if '\n' in raw_status:
+                                status = raw_status.split('\n')[-1].strip()
+                            else:
+                                status = raw_status
+                        
+                        if len(auth_parts) >= 3:
+                            position = '·'.join(auth_parts[2:]).strip()  # 직무명에 · 포함될 수 있음
                             
                 else:
                     # 형태 1: 개행 구분자로 파싱
@@ -284,12 +296,24 @@ class BlindReviewCrawler:
                     if len(auth_lines) >= 2:
                         position = auth_lines[1]  # 직무
                     
-                    if len(auth_lines) >= 3:
-                        # 연도 추출 (2020.03.10 형태에서 2020만 추출)
-                        date_text = auth_lines[2]
-                        year_match = re.search(r'(\d{4})', date_text)
+                    # 연도 추출 - 모든 라인에서 4자리 숫자 찾기
+                    for line in auth_lines:
+                        year_match = re.search(r'(\d{4})', line)
                         if year_match:
-                            year = year_match.group(1)
+                            potential_year = int(year_match.group(1))
+                            # 합리적인 연도 범위 체크 (2010-2030)
+                            if 2010 <= potential_year <= 2030:
+                                year = str(potential_year)
+                                break
+                        
+                # 마지막 폴백: 전체 auth_text에서 연도 찾기
+                if year == "정보 없음":
+                    year_matches = re.findall(r'(\d{4})', auth_text)
+                    for year_str in year_matches:
+                        potential_year = int(year_str)
+                        if 2010 <= potential_year <= 2030:
+                            year = year_str
+                            break
                         
             except (NoSuchElementException, IndexError):
                 status = "정보 없음"
@@ -336,8 +360,14 @@ class BlindReviewCrawler:
                 
                 if pros_lines:
                     pros = self.clean_text(' '.join(pros_lines))
+                    # 빈 결과 체크
+                    if not pros or len(pros.strip()) < 5:
+                        pros = "장점 정보 부족"
                 if cons_lines:
                     cons = self.clean_text(' '.join(cons_lines))
+                    # 빈 결과 체크
+                    if not cons or len(cons.strip()) < 5:
+                        cons = "단점 정보 부족"
                     
             except Exception:
                 pass
@@ -361,9 +391,13 @@ class BlindReviewCrawler:
             return [0.0, "0", "0", "0", "0", "0", "오류", "오류", "오류", "오류", "추출 실패", "추출 실패"]
     
     def clean_text(self, text):
-        """기본 텍스트 정제"""
-        if not text:
-            return ""
+        """기본 텍스트 정제 - 빈 값 방지 강화"""
+        if not text or not isinstance(text, str):
+            return "내용 없음"
+        
+        original_text = text.strip()
+        if not original_text:
+            return "내용 없음"
         
         # 한글 자모 제거
         pattern = '([ㄱ-ㅎㅏ-ㅣ]+)'
@@ -380,6 +414,16 @@ class BlindReviewCrawler:
         # 줄바꿈을 공백으로
         text = text.replace('\r', '').replace('\n', ' ')
         text = re.sub(r'\s+', ' ', text).strip()
+        
+        # 정제 후 빈 값이 되면 원본의 일부라도 반환
+        if not text or len(text.strip()) < 3:
+            # 원본에서 한글과 영문 숫자만 추출
+            clean_original = re.sub(r'[^가-힣a-zA-Z0-9\s]', ' ', original_text)
+            clean_original = re.sub(r'\s+', ' ', clean_original).strip()
+            if clean_original and len(clean_original) >= 3:
+                return clean_original
+            else:
+                return "텍스트 정제 후 내용 부족"
         
         return text
     
@@ -441,7 +485,7 @@ class BlindReviewCrawler:
         
         for idx, raw_review in enumerate(tqdm(all_reviews, desc="청크 생성", unit="리뷰")):
             try:
-                # 리뷰 데이터 구조화 (필드 추가)
+                # 리뷰 데이터 구조화 (필드 추가) - 빈 값 필터링 강화
                 review_data = {
                     "회사": company_code,
                     "총점": raw_review[0],
@@ -450,24 +494,30 @@ class BlindReviewCrawler:
                     "급여복지": raw_review[3],
                     "사내문화": raw_review[4],
                     "경영진": raw_review[5],
-                    "제목": raw_review[6],
+                    "제목": raw_review[6] if raw_review[6] and str(raw_review[6]).strip() not in ['오류', '추출 실패', '제목 없음', '', 'null', 'None'] else None,
                     "직원유형_원본": raw_review[7],
                     "직무": raw_review[8],        # 새로 추가
                     "연도": raw_review[9],        # 새로 추가
                     "직원유형": raw_review[7],  # 현직원/전직원 상태 추가
-                    "장점": raw_review[10],       # 인덱스 조정
-                    "단점": raw_review[11],       # 인덱스 조정
+                    "장점": raw_review[10] if raw_review[10] and str(raw_review[10]).strip() not in ['추출 실패', '장점 정보 부족', '정보 없음', '', 'null', 'None'] else None,
+                    "단점": raw_review[11] if raw_review[11] and str(raw_review[11]).strip() not in ['추출 실패', '단점 정보 부족', '정보 없음', '', 'null', 'None'] else None,
                     "id": f"review_{company_code}_{idx:04d}"
                 }
                 
                 # 분류 없이 청크만 생성
                 chunk_groups = self.category_processor.create_chunks_without_classification(review_data)
                 
-                # 청크 데이터와 내용 분리 저장
+                # 청크 데이터와 내용 분리 저장 (강화된 null 값 필터링)
                 for chunk_type, chunks_info in chunk_groups.items():
                     for chunk_info in chunks_info:
-                        all_chunk_data.append(chunk_info)
-                        all_chunk_contents.append(chunk_info['content'])
+                        # 강화된 유효성 검증 (1단계 방어막)
+                        if (chunk_info and 
+                            chunk_info.get('content') and 
+                            isinstance(chunk_info['content'], str) and 
+                            len(chunk_info['content'].strip()) >= 10 and  # 최소 길이 10자
+                            chunk_info['content'].strip() not in ['정보 없음', '추출 실패', '오류', '내용 없음', 'null', 'None', '텍스트 정제 후 내용 부족']):
+                            all_chunk_data.append(chunk_info)
+                            all_chunk_contents.append(chunk_info['content'].strip())
                 
             except Exception:
                 continue
@@ -478,8 +528,30 @@ class BlindReviewCrawler:
         
         print(f"📋 총 {len(all_chunk_contents)}개 청크 생성 완료")
         
-        # 나머지 처리는 기존과 동일...
-        # (분류, 매핑, 저장 로직은 변경 없음)
+        # 2단계 방어막: 배치 처리 전 추가 검증
+        print("🔍 배치 처리 전 청크 유효성 검증...")
+        valid_chunk_contents = []
+        valid_chunk_data = []
+        
+        for i, (content, data) in enumerate(zip(all_chunk_contents, all_chunk_data)):
+            # 엄격한 유효성 검증 (2단계 방어막)
+            if (content and 
+                isinstance(content, str) and 
+                content != 'null' and 
+                content.lower() != 'none' and
+                len(content.strip()) >= 10 and
+                content.strip() not in ['정보 없음', '추출 실패', '오류', '내용 없음', '텍스트 정제 후 내용 부족'] and
+                not content.strip().startswith('[청크') and  # 에러 텍스트 제외
+                len(set(content.strip())) > 3):  # 의미있는 문자 다양성 확인
+                valid_chunk_contents.append(content.strip())
+                valid_chunk_data.append(data)
+            else:
+                print(f"⚠️ 무효한 청크 제거 (인덱스 {i}): '{content[:30]}...'")
+        
+        if len(valid_chunk_contents) != len(all_chunk_contents):
+            print(f"📋 유효한 청크: {len(valid_chunk_contents)}개 (제거된 청크: {len(all_chunk_contents) - len(valid_chunk_contents)}개)")
+            all_chunk_contents = valid_chunk_contents
+            all_chunk_data = valid_chunk_data
         
         # 2단계: 대용량 배치 분류 (AI 사용시에만)
         classification_results = []

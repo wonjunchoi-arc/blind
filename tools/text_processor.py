@@ -276,8 +276,7 @@ class OptimizedBatchClassifier:
     
     def _get_optimized_system_prompt(self) -> str:
         """최적화된 시스템 프롬프트"""
-        return 
-    """당신은 블라인드(Blind) 기업 리뷰 분류 전문 AI입니다.  
+        return """당신은 블라인드(Blind) 기업 리뷰 분류 전문 AI입니다.  
 주어진 리뷰 텍스트를 빠르고 정확하게 아래 5개 카테고리 중 하나로만 분류하세요.  
 
 카테고리 정의:  
@@ -338,19 +337,47 @@ class OptimizedBatchClassifier:
 # [{"primary_category": "카테고리", "primary_confidence": 0.8}]"""
     
     def _create_optimized_batch_prompt(self, batch: List[str]) -> str:
-        """최적화된 배치 프롬프트 생성"""
+        """최적화된 배치 프롬프트 생성 - null 값 방지 강화"""
+        
+        # 유효한 청크만 선별하고 기본값 제공 (강화된 필터링)
+        processed_batch = []
+        for i, chunk in enumerate(batch):
+            if chunk is None:
+                processed_batch.append("[내용 없음]")
+                print(f"⚠️ 배치에서 null 값 발견 - 인덱스 {i}")
+            elif not isinstance(chunk, str):
+                processed_batch.append("[잘못된 데이터 타입]")
+                print(f"⚠️ 배치에서 잘못된 타입 발견 - 인덱스 {i}: {type(chunk)}")
+            elif len(chunk.strip()) == 0:
+                processed_batch.append("[빈 텍스트]")
+                print(f"⚠️ 배치에서 빈 텍스트 발견 - 인덱스 {i}")
+            elif chunk.strip() in ['정보 없음', '추출 실패', '오류', '내용 없음', 'null', 'None', '텍스트 정제 후 내용 부족']:
+                processed_batch.append("[무효한 내용]")
+                print(f"⚠️ 배치에서 무효한 내용 발견 - 인덱스 {i}: {chunk[:20]}...")
+            elif len(chunk.strip()) < 5:
+                processed_batch.append("[너무 짧은 내용]")
+                print(f"⚠️ 배치에서 너무 짧은 내용 발견 - 인덱스 {i}: '{chunk}'")
+            else:
+                processed_batch.append(chunk.strip())
+        
+        # 최종 검증: 모든 청크가 유효한지 확인
+        valid_count = sum(1 for chunk in processed_batch if not chunk.startswith("["))
+        if valid_count == 0:
+            raise ValueError("배치에 유효한 청크가 하나도 없습니다.")
+        
+        print(f"📋 배치 프롬프트 생성: 전체 {len(processed_batch)}개 중 유효한 청크 {valid_count}개")
         
         # 프롬프트 헤더
-        prompt = f"다음 {len(batch)}개 텍스트를 각각 분류하세요:\n\n"
+        prompt = f"다음 {len(processed_batch)}개 텍스트를 각각 분류하세요:\n\n"
         
         # 텍스트 추가 (간결하게)
-        for i, chunk in enumerate(batch, 1):
+        for i, chunk in enumerate(processed_batch, 1):
             # 너무 긴 텍스트는 잘라냄 (토큰 절약)
             truncated_chunk = chunk[:200] if len(chunk) > 200 else chunk
             prompt += f"{i}. {truncated_chunk}\n"
         
         # 푸터
-        prompt += f"\n{len(batch)}개 결과를 JSON 배열로 응답하세요."
+        prompt += f"\n{len(processed_batch)}개 결과를 JSON 배열로 응답하세요."
         
         return prompt
     
@@ -484,14 +511,49 @@ class EnhancedTextProcessor:
         
         self.stats["total_api_calls_saved"] = api_calls_saved
         
+        # 3단계 방어막: API 호출 전 최종 검증 (강화)
+        print("🛡️ API 호출 전 최종 검증...")
+        valid_chunks = []
+        
+        invalid_contents = [
+            '정보 없음', '추출 실패', '오류', '내용 없음', 
+            'null', 'None', '텍스트 정제 후 내용 부족',
+            '장점 정보 부족', '단점 정보 부족', '제목 없음'
+        ]
+        
+        for i, chunk in enumerate(chunks):
+            if (chunk and 
+                isinstance(chunk, str) and 
+                len(chunk.strip()) >= 10 and  # 최소 길이 10자로 통일
+                chunk.strip() not in invalid_contents and
+                not chunk.strip().startswith('[') and
+                not chunk.strip().startswith('⚠️')):
+                valid_chunks.append(chunk.strip())
+            else:
+                print(f"⚠️ 최종 검증에서 무효한 청크 제거 (인덱스 {i}): '{chunk[:30]}...'")
+        
+        if len(valid_chunks) != len(chunks):
+            print(f"📋 최종 유효 청크: {len(valid_chunks)}개 (제거된 청크: {len(chunks) - len(valid_chunks)}개)")
+            chunks = valid_chunks
+            
+            if not chunks:
+                print("❌ 유효한 청크가 하나도 없습니다.")
+                return []
+        
         # 1단계: 텍스트 정규화 (빠른 처리)
         print("\n📍 1단계: 텍스트 정규화 시작...")
         normalize_start = time.time()
         
         normalized_chunks = []
         for chunk in tqdm(chunks, desc="정규화", unit="청크", ncols=60):
-            normalized = self.normalizer.normalize_text(chunk)
-            normalized_chunks.append(normalized)
+            if chunk and isinstance(chunk, str):  # 추가 안전 검증
+                normalized = self.normalizer.normalize_text(chunk)
+                if normalized and len(normalized.strip()) >= 3:
+                    normalized_chunks.append(normalized)
+                else:
+                    print(f"⚠️ 정규화 후 빈 결과로 제거: {repr(chunk)[:30]}...")
+            else:
+                print(f"⚠️ 정규화 중 무효한 청크 건너뜀: {repr(chunk)[:30]}...")
         
         normalize_time = time.time() - normalize_start
         print(f"✅ 1단계 완료: 텍스트 정규화 ({normalize_time:.1f}초)")

@@ -145,13 +145,13 @@ class CategorySpecificProcessor:
         }
         
         # 1. 제목 청크 정보 생성
-        if title_text.strip():
+        if title_text and title_text.strip():
             title_sentences = self._split_text_with_kss(title_text)
             if title_sentences:
                 title_chunk_info = self._create_chunk_info_without_classification(
                     title_sentences, "title", company, review_number, employee_info, ratings, None, position, year, employee_type
                 )
-                if title_chunk_info:
+                if title_chunk_info:  # None 체크
                     all_chunk_info["title"].append(title_chunk_info)
         
         # 2. 장점/단점 청크 정보 생성
@@ -197,11 +197,11 @@ class CategorySpecificProcessor:
         
         for i, group in enumerate(sentence_groups):
             content = self._join_sentences_naturally(group)
-            if len(content.strip()) >= 20:  # 최소 길이 체크
+            if len(content.strip()) >= 10:  # 최소 길이 체크
                 chunk_info = self._create_chunk_info_without_classification(
                     group, chunk_type, company, review_number, employee_info, ratings, is_positive, position, year, employee_type, i
                 )
-                if chunk_info:
+                if chunk_info:  # None이 아닌 경우만 추가
                     chunk_infos.append(chunk_info)
         
         return chunk_infos
@@ -209,10 +209,34 @@ class CategorySpecificProcessor:
     def _create_chunk_info_without_classification(self, sentences: List[str], chunk_type: str,
                                                 company: str, review_number: str, employee_info: Dict,
                                                 ratings: Dict[str, float], is_positive: Optional[bool], 
-                                                position: str, year: str, employee_type: str, chunk_idx: int = 0) -> Dict:
-        """분류 없는 청크 정보 생성"""
+                                                position: str, year: str, employee_type: str, chunk_idx: int = 0) -> Optional[Dict]:
+        """분류 없는 청크 정보 생성 - 빈 값 방지 강화"""
         
         content = self._join_sentences_naturally(sentences)
+        
+        # 강화된 빈 콘텐츠나 문제 있는 콘텐츠 필터링
+        if not content or not isinstance(content, str):
+            return None
+        
+        content = content.strip()
+        
+        # 더욱 엄격한 무효 콘텐츠 체크
+        invalid_contents = [
+            '정보 없음', '추출 실패', '오류', '내용 없음', 
+            'null', 'None', '텍스트 정제 후 내용 부족',
+            '장점 정보 부족', '단점 정보 부족', '제목 없음'
+        ]
+        
+        if not content or content in invalid_contents:
+            return None
+        
+        # 최소 길이 체크 (10자로 유지)
+        if len(content) < 10:
+            return None
+        
+        # 특정 패턴 제외 (에러 메시지 등)
+        if (content.startswith('[') and content.endswith(']')) or content.startswith('⚠️'):
+            return None
         
         # 기본 청크 정보
         chunk_info = {
