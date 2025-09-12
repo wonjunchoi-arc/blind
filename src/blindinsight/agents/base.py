@@ -232,25 +232,26 @@ class BaseAgent(ABC):
                 print(f"[{self.name}] Supervisor 프롬프트: {supervisor_prompt[:200]}...")
             print(f"[{self.name}] 컨텍스트: {context}")
             
-            # 1. 키워드 추출 및 회사명 파싱
-            company_name = self._extract_company_name(user_question)
-            keywords = self._extract_keywords(user_question)
+            # 1. 프론트엔드에서 전달된 필터 사용
+            frontend_company = context.get("company_filter") if context else None
+            frontend_year = context.get("year_filter") if context else None
             
-            print(f"[{self.name}] 추출된 정보 - 회사: {company_name}, 키워드: {keywords}")
+            print(f"[{self.name}] 프론트엔드 필터 - 회사: {frontend_company}, 연도: {frontend_year}")
             
-            # 2. RAG 검색 수행
+            # 2. RAG 검색 수행 (단순화)
             print(f"[{self.name}] RAG 검색 시작...")
             rag_documents = await self._perform_rag_search(
                 user_question=user_question,
-                company_name=company_name,
-                keywords=keywords,
+                company_filter=frontend_company,
+                year_filter=frontend_year,
                 context=context
             )
             
             # 3. 문서 존재 여부 확인
             if not rag_documents:
                 print(f"[{self.name}] RAG 검색 결과 없음")
-                return f"죄송합니다. '{company_name or '해당 회사'}'에 대한 {self.name} 관련 정보를 찾을 수 없습니다."
+                company_text = frontend_company or "해당 회사"
+                return f"죄송합니다. '{company_text}'에 대한 {self.name} 관련 정보를 찾을 수 없습니다."
             
             print(f"[{self.name}] RAG 검색 완료: {len(rag_documents)}개 문서 발견")
             
@@ -265,7 +266,7 @@ class BaseAgent(ABC):
                 print(f"[{self.name}] Supervisor 커스텀 프롬프트 사용")
             else:
                 # 기본 프롬프트 생성
-                final_prompt = self._generate_default_prompt(user_question, company_name)
+                final_prompt = self._generate_default_prompt(user_question, frontend_company)
                 print(f"[{self.name}] 기본 프롬프트 사용")
             
             print(f"[{self.name}] 최종 프롬프트: {final_prompt[:300]}...")
@@ -298,84 +299,32 @@ class BaseAgent(ABC):
             traceback.print_exc()
             return f"분석 중 오류가 발생했습니다: {str(e)}"
     
-    def _extract_company_name(self, text: str) -> Optional[str]:
-        """텍스트에서 회사명 추출 (간단한 패턴 매칭)"""
-        # 자주 언급되는 회사명 패턴
-        companies = [
-            "삼성", "삼성전자", "네이버", "카카오", "구글", "애플", "마이크로소프트", 
-            "토스", "당근마켓", "쿠팡", "배달의민족", "우아한형제들", "LG", "LG전자",
-            "SK", "현대", "롯데", "신세계", "CJ", "포스코", "한국전력", "KT", "KT&G"
-        ]
-        
-        text_upper = text.upper()
-        for company in companies:
-            if company.upper() in text_upper:
-                return company
-        
-        return None
-    
-    def _extract_keywords(self, text: str) -> str:
-        """사용자 질문에서 키워드 추출"""
-        # 간단한 키워드 추출 로직
-        keywords = []
-        
-        # 도메인별 키워드 매핑
-        keyword_mapping = {
-            # 연봉/복지 관련
-            "salary_benefits": ["연봉", "급여", "월급", "초봉", "보너스", "인센티브", "복지", "복리후생", "연차", "휴가", "보험", "지원금"],
-            # 문화 관련  
-            "company_culture": ["문화", "분위기", "조직문화", "기업문화", "팀워크", "소통", "자유로운", "수평적", "수직적"],
-            # 워라밸 관련
-            "work_life_balance": ["워라밸", "야근", "야업", "근무시간", "퇴근시간", "휴가", "휴일", "유연근무", "재택근무"],
-            # 경영진 관련
-            "management": ["상사", "팀장", "임원", "경영진", "리더십", "관리", "의사결정", "승진"],
-            # 성장 관련
-            "career_growth": ["성장", "승진", "교육", "발전", "기회", "커리어", "스킬업", "학습", "트레이닝"]
-        }
-        
-        # 현재 에이전트 타입에 맞는 키워드 찾기
-        name = getattr(self, 'name', '') or ''
-        agent_type = name.replace('_agent', '')
-        if agent_type in keyword_mapping:
-            for keyword in keyword_mapping[agent_type]:
-                if keyword in text:
-                    keywords.append(keyword)
-        
-        # 일반적인 키워드도 추가
-        common_keywords = ["좋은", "나쁜", "어떤", "어때", "장점", "단점", "괜찮은", "만족", "불만"]
-        for keyword in common_keywords:
-            if keyword in text:
-                keywords.append(keyword)
-        
-        return ", ".join(keywords) if keywords else ""
-    
     async def _perform_rag_search(
         self,
         user_question: str,
-        company_name: Optional[str],
-        keywords: str,
+        company_filter: Optional[str] = None,
+        year_filter: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        """RAG 검색 수행"""
+        """RAG 검색 수행 - 프론트엔드 필터 직접 사용"""
         try:
-            # 검색 쿼리 구성
-            if keywords:
-                search_query = f"{company_name or ''} {keywords}".strip()
-            else:
-                search_query = user_question
+            # 검색 쿼리는 사용자 질문 그대로 사용
+            search_query = user_question
             
             # 에이전트별 전문 컬렉션 사용
             collections = getattr(self, 'target_collections', ['general'])
             
             print(f"[{self.name}] 검색 쿼리: '{search_query}'")
             print(f"[{self.name}] 대상 컬렉션: {collections}")
-            print(f"[{self.name}] 회사명 필터: {company_name}")
+            print(f"[{self.name}] 회사 필터: {company_filter}")
+            print(f"[{self.name}] 연도 필터: {year_filter}")
             
-            # RAG 검색 수행
+            # RAG 검색 수행 (프론트엔드 필터 직접 사용)
             documents = await self.retrieve_knowledge(
                 query=search_query,
                 collections=collections,
-                company_name=company_name,
+                company_name=company_filter,
+                year_filter=year_filter,
                 k=15  # 좀 더 많은 문서 검색
             )
             
