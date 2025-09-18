@@ -24,6 +24,10 @@ class SupervisorState(TypedDict):
     evaluation_result: Optional[Dict[str, Any]]  # 품질평가 전체 결과
     max_retry_count: int  # 최대 재시도 횟수
     last_worker_agent: Optional[str]  # 마지막으로 실행된 워커 에이전트
+    # RAG 필터 필드 추가
+    company_filter: Optional[str]  # 회사명 필터
+    year_filter: Optional[str]  # 연도 필터
+    content_type: Optional[str]  # 콘텐츠 타입 필터 ("pros": 장점, "cons": 단점, None: 전체)
 
 # -----------------------------
 # 유틸리티 함수들
@@ -49,10 +53,10 @@ def sanitize_task_description(text: Optional[str]) -> str:
         clipped = clipped[:MAX_TASK_LEN].rstrip()
     return clipped
 
-def create_initial_state(user_question: str) -> SupervisorState:
+def create_initial_state(user_question: str, context: Optional[Dict[str, Any]] = None) -> SupervisorState:
     """초기 Supervisor 상태 생성"""
     from langchain_core.messages import HumanMessage
-    
+
     return {
         "messages": [HumanMessage(content=user_question)],
         "current_agent": "supervisor",
@@ -66,6 +70,10 @@ def create_initial_state(user_question: str) -> SupervisorState:
         "evaluation_result": None,
         "max_retry_count": 2,
         "last_worker_agent": None,
+        # RAG 필터 초기값 (context에서 가져오기)
+        "company_filter": context.get("company_filter") if context else None,
+        "year_filter": context.get("year_filter") if context else None,
+        "content_type": context.get("content_type") if context else None,
     }
 
 # -----------------------------
@@ -95,7 +103,8 @@ def get_last_user_message_from_state(state: SupervisorState) -> Optional[str]:
     """상태에서 마지막 사용자 메시지 추출"""
     for msg in reversed(state["messages"]):
         if hasattr(msg, "content") and msg.content and not str(msg.content).startswith("handoff -> "):
-            return msg.content
+            if "HumanMessage" in str(type(msg)):
+                return msg.content
     return None
 
 def filter_handoff_messages(messages: List[AnyMessage]) -> List[AnyMessage]:

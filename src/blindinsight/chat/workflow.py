@@ -113,39 +113,36 @@ class SupervisorWorkflow:
     def _create_supervisor_node(self):
         """Supervisor 노드 생성 - 품질평가 결과 처리 및 재시도 로직 포함"""
         
-        # 기본 supervisor agent
-        base_supervisor = create_react_agent(
-            model=self.model,
-            tools=self.handoff_tools,
-            name="supervisor",
-            prompt=(
-               "당신은 팀 슈퍼바이저입니다. 당신의 임무:\n"
-                "1) 초기 요청: 적합한 전문가 선택 + 간결한 작업 설명(task_description, 1~2문장, 160자) 작성\n"
-                "2) 품질평가 후: 재시도 여부 판단 + 개선된 작업 설명 생성\n\n"
-                "작업 설명 규칙:\n"
-                "- 금지: 불릿/체크리스트/장문/메타지시\n"
-                "- 포함: 핵심 목표 + 최소 컨텍스트\n\n"
-                "중요 규칙:\n"
-                "- 한 번에 정확히 하나의 transfer_to_* 도구만 호출하세요. 병렬/복수 호출 금지.\n"
-                "반드시 transfer_to_* 도구를 호출하세요."
-            ),
-        )
-        
         async def supervisor_node(state: SupervisorState) -> SupervisorState:
             print(f"[Supervisor] ===== supervisor 노드 시작 =====")
             print(f"[Supervisor] current_agent: {state.get('current_agent')}")
             print(f"[Supervisor] retry_count: {state.get('retry_count', 0)}")
             print(f"[Supervisor] should_retry: {state.get('should_retry', False)}")
-            
+
+            # 사용자 질문 추출
+            user_question = get_user_question_from_state(state)
+            print(f"[Supervisor] 추출된 사용자 질문: {user_question}")
+
+            # 동적 프롬프트 생성 (사용자 질문 포함)
+            dynamic_prompt = self._create_dynamic_supervisor_prompt(user_question)
+
+            # 동적 프롬프트로 supervisor agent 생성
+            base_supervisor = create_react_agent(
+                model=self.model,
+                tools=self.handoff_tools,
+                name="supervisor",
+                prompt=dynamic_prompt,
+            )
+
             # 1. 품질평가 결과 처리 (quality_evaluator로부터 돌아온 경우)
             if state.get("current_agent") == "supervisor" and state.get("selected_expert"):
                 evaluation_result = self._parse_quality_evaluation(state)
                 if evaluation_result:
                     return self._handle_quality_evaluation(state, evaluation_result, base_supervisor)
-            
+
             # 2. 초기 요청 처리 (사용자 질문을 처음 받은 경우)
             print(f"[Supervisor] 초기 요청 처리 - base_supervisor 호출")
-            
+
             # 일반적 base_supervisor로 전달해 handoff 도구를 선택하도록 함
             # LangGraph 내부에서 Command 반환이 자동 처리
             result = await base_supervisor.ainvoke(state)
@@ -153,7 +150,49 @@ class SupervisorWorkflow:
             return result
         
         return supervisor_node
-    
+
+    def _create_dynamic_supervisor_prompt(self, user_question: str) -> str:
+        """사용자 질문을 포함한 동적 supervisor 프롬프트 생성"""
+        return f"""당신은 팀 슈퍼바이저입니다.
+
+        현재 사용자 질문: "{user_question or '질문 없음'}"
+
+        당신의 임무:
+        1) 초기 요청: 위 사용자 질문에 가장 적합한 전문가 선택 + 작업 설명(task_description, 2~5문장, 160~300자) 작성
+        2) 품질평가 후: 재시도 여부 판단 + 개선된 작업 설명 생성
+
+        작업 설명 규칙:
+        - 금지: 불릿/체크리스트/장문/메타지시
+        - 포함: 핵심 목표 + 최소 컨텍스트
+
+        문서 기반 분기 규칙:
+        - 작업 설명은 'Context에 검색된 문서가 있을 때만' 그 원문을 근거로 답하도록 지시해야 합니다.
+        - 관련 원문이 없으면 '관련 문서 없음'을 명시하고, 추측 없이 답변을 중단·보고하도록 지시합니다.
+        - 작업 설명은 실제 검증된 원문을 응답에 그대로 포함(가공/의역 금지)하고, 그 뒤 결론에서 종합 요약하도록 요구해야 합니다.
+        - 작업 설명 자체는 2~5문장, 160~300자 이내로 유지합니다.
+
+        전달/형식 규칙:
+        - 에이전트가 받는 최종 입력은 f"Context:\\n{{context_text}}\\n\\nQuery: {{task_description}}" 형식입니다.
+        - task_description(=Query)은 다음을 간결히 지시해야 합니다:
+        ① 사용자 질문 '{user_question or ''}'과 직접 연관된 원문만 Context에서 그대로 나열,
+        ② 원문은 1~5번 순서대로 정리(불릿/번호 외 불필요한 가공 금지, 출처 식별자는 유지),
+        ③ 이어서 '결론:' 단락에서 위 1~5번 인용을 종합하여 사용자 질문에 대한 답을 3~5문장으로 요약,
+        ④ 관련 원문이 없으면 '관련 문서 없음'을 밝히고 답변 중단(추측 금지).
+
+        === 예시 출력 형식 ===
+        Context:
+        (예시 context_text: 여러 문서가 검색된 경우)
+
+        Query:
+        1) [문서 A의 관련 원문 그대로]
+        2) [문서 C의 관련 원문 그대로]
+        3) [문서 D의 관련 원문 그대로]
+
+        결론: 위 1~3의 내용을 종합하면, 사용자 질문에 대한 답은 ... 이며, 이는 문서들에서 반복적으로 확인되는 핵심 사실과 일치합니다.
+        ======================
+        - 반드시 위 예시 형식을 따르세요.
+        - 한 번에 정확히 하나의 transfer_to_* 도구만 호출합니다(병렬/복수 호출 금지). 반드시 transfer_to_* 도구를 호출하세요."""
+
     def _parse_quality_evaluation(self, state: SupervisorState) -> Optional[Dict[str, Any]]:
         """메시지에서 품질평가 결과 파싱"""
         try:
@@ -214,22 +253,25 @@ class SupervisorWorkflow:
             # 이전 worker agent로 재전송
             last_worker = state.get("last_worker_agent")
             if last_worker and last_worker in self.agents:
-                print(f"[Supervisor] {last_worker}로 재전송")
-                
+                print(f"[Supervisor] Command로 {last_worker}에게 재전송: {improved_prompt[:50]}...")
+
                 # 개선된 handoff 메시지 생성
                 handoff_msg = f"handoff -> {last_worker} | improved_task: {improved_prompt}"
                 tool_message = {
-                    "role": "tool", 
+                    "role": "tool",
                     "name": f"transfer_to_{last_worker}",
                     "tool_call_id": "retry_handoff",
                     "content": handoff_msg,
                 }
-                
-                return {
-                    **retry_state,
-                    "messages": state["messages"] + [tool_message],
-                    "current_agent": last_worker,
-                }
+
+                # Command 패턴으로 worker에게 직접 이동
+                return Command(
+                    goto=last_worker,
+                    update={
+                        **retry_state,
+                        "messages": state["messages"] + [tool_message],
+                    },
+                )
         
         # 재시도 불필요 또는 재시도 횟수 초과 - 최종 응답 반환
         print(f"[Supervisor] 워크플로우 완료 - 최종 응답 반환")
@@ -248,17 +290,17 @@ class SupervisorWorkflow:
     
     def _create_improved_prompt(self, state: SupervisorState, suggestions: List[str]) -> str:
         """개선사항을 반영한 프롬프트 생성"""
-        
+
         # 원본 사용자 질문 추출
         user_question = get_user_question_from_state(state)
-        
+
         # 개선사항을 반영한 새 프롬프트
         if suggestions:
             main_suggestion = suggestions[0] if suggestions else ""
             improved_prompt = f"{user_question} (개선요구: {main_suggestion})"
         else:
             improved_prompt = f"{user_question} (더 상세하고 구체적인 답변 필요)"
-        
+
         # 길이 제한 적용
         return sanitize_task_description(improved_prompt)
 
@@ -293,7 +335,13 @@ class SupervisorWorkflow:
                 response_content = await agent.execute_as_supervisor_tool(
                     user_question=user_message,
                     supervisor_prompt=supervisor_prompt,
-                    context={"agent_name": agent_name, "last_ai_response": last_ai_response},
+                    context={
+                        "agent_name": agent_name,
+                        "last_ai_response": last_ai_response,
+                        "company_filter": state.get("company_filter"),
+                        "year_filter": state.get("year_filter"),
+                        "content_type": state.get("content_type")
+                    },
                 )
 
                 return {

@@ -137,7 +137,7 @@ class BaseAgent(ABC):
     ):
         """
         BaseAgent 초기화 메서드
-        
+
         Args:
             name: 에이전트 이름 (예: "culture_analysis")
             config: 에이전트 설정 (기본값 사용 시 None)
@@ -146,10 +146,13 @@ class BaseAgent(ABC):
         self.name = name  # 에이전트 식별자
         self.config = config or AgentConfig()  # 설정 (기본값 또는 커스텀)
         self.tools = tools or []  # 도구 목록 초기화
-        
+
+        # 에이전트별 모델명 결정
+        model_name = self._get_agent_model_name()
+
         # LLM 모델 초기화 - OpenAI ChatGPT
         self.llm = ChatOpenAI(
-            model=self.config.model_name,  # 모델명 설정
+            model=model_name,  # 에이전트별 모델명 설정
             temperature=self.config.temperature,  # 창의성 수준
             max_tokens=self.config.max_tokens,  # 최대 토큰 수
             timeout=self.config.timeout,  # 타임아웃 설정
@@ -173,6 +176,39 @@ class BaseAgent(ABC):
         self._execution_count = 0  # 총 실행 횟수
         self._total_execution_time = 0.0  # 총 실행 시간
         self._success_count = 0  # 성공 실행 횟수
+
+    def _get_agent_model_name(self) -> str:
+        """
+        에이전트별 모델명 결정
+
+        우선순위:
+        1. config에서 명시적으로 설정된 모델명
+        2. 에이전트별 환경변수 설정
+        3. 기본 에이전트 모델
+        4. 하드코딩된 기본값
+
+        Returns:
+            사용할 모델명
+        """
+        # 1. config에서 명시적으로 설정된 경우
+        if hasattr(self.config, 'model_name') and self.config.model_name != "gpt-4o-mini-2024-07-18":
+            return self.config.model_name
+
+        # 2. 에이전트별 환경변수 설정 확인
+        agent_model_map = {
+            "salary_benefits_agent": settings.salary_benefits_agent_model,
+            "company_culture_agent": settings.company_culture_agent_model,
+            "work_life_balance_agent": settings.work_life_balance_agent_model,
+            "management_agent": settings.management_agent_model,
+            "career_growth_agent": settings.career_growth_agent_model,
+            "quality_evaluator_agent": settings.quality_evaluator_agent_model,
+        }
+
+        if self.name in agent_model_map:
+            return agent_model_map[self.name]
+
+        # 3. 기본 에이전트 모델
+        return settings.default_agent_model
     
     def add_message(self, message: Union[HumanMessage, AIMessage]):
         """메시지를 대화 기록에 추가"""
@@ -235,15 +271,17 @@ class BaseAgent(ABC):
             # 1. 프론트엔드에서 전달된 필터 사용
             frontend_company = context.get("company_filter") if context else None
             frontend_year = context.get("year_filter") if context else None
-            
-            print(f"[{self.name}] 프론트엔드 필터 - 회사: {frontend_company}, 연도: {frontend_year}")
-            
+            frontend_content_type = context.get("content_type") if context else None
+
+            print(f"[{self.name}] 프론트엔드 필터 - 회사: {frontend_company}, 연도: {frontend_year}, 콘텐츠타입: {frontend_content_type}")
+
             # 2. RAG 검색 수행 (단순화)
             print(f"[{self.name}] RAG 검색 시작...")
             rag_documents = await self._perform_rag_search(
                 user_question=user_question,
                 company_filter=frontend_company,
                 year_filter=frontend_year,
+                content_type_filter=frontend_content_type,
                 context=context
             )
             
@@ -304,6 +342,7 @@ class BaseAgent(ABC):
         user_question: str,
         company_filter: Optional[str] = None,
         year_filter: Optional[str] = None,
+        content_type_filter: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """RAG 검색 수행 - 프론트엔드 필터 직접 사용"""
@@ -318,13 +357,15 @@ class BaseAgent(ABC):
             print(f"[{self.name}] 대상 컬렉션: {collections}")
             print(f"[{self.name}] 회사 필터: {company_filter}")
             print(f"[{self.name}] 연도 필터: {year_filter}")
-            
+            print(f"[{self.name}] 콘텐츠타입 필터: {content_type_filter}")
+
             # RAG 검색 수행 (프론트엔드 필터 직접 사용)
             documents = await self.retrieve_knowledge(
                 query=search_query,
                 collections=collections,
                 company_name=company_filter,
                 year_filter=year_filter,
+                content_type_filter=content_type_filter,
                 k=15  # 좀 더 많은 문서 검색
             )
             
@@ -394,8 +435,8 @@ class BaseAgent(ABC):
             return f"{self.name}의 분석 결과를 표시할 수 없습니다."
     
     async def retrieve_knowledge(
-        self, 
-        query: str, 
+        self,
+        query: str,
         collections: List[str] = None,
         company_name: Optional[str] = None,
         content_type_filter: Optional[str] = None,  # "pros", "cons"

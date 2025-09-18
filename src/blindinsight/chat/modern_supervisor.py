@@ -106,7 +106,7 @@ class ModernSupervisorAgent:
     async def chat(self, user_question: str, session_id: str = "default", context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """사용자 질문 처리 및 최종 응답 반환"""
         try:
-            initial_state = create_initial_state(user_question)
+            initial_state = create_initial_state(user_question, context)
             config = {"configurable": {"thread_id": session_id}}
             result = await self.supervisor_workflow.ainvoke(initial_state, config=config)
 
