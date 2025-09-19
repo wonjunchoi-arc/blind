@@ -366,7 +366,7 @@ class BaseAgent(ABC):
                 company_name=company_filter,
                 year_filter=year_filter,
                 content_type_filter=content_type_filter,
-                k=15  # 좀 더 많은 문서 검색
+                k=settings.default_search_k
             )
             
             print(f"[{self.name}] RAG 검색 결과: {len(documents)}개 문서")
@@ -497,7 +497,7 @@ class BaseAgent(ABC):
             all_results = []
             for collection_name in collections:
                 try:
-                    collection_k = k // len(collections) + 2
+                    collection_k = k // len(collections)
                     print(f"[{self.name}] '{collection_name}' 컬렉션에서 {collection_k}개 문서 검색...")
                     
                     search_results = await self.rag_retriever.search(

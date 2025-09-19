@@ -2,288 +2,404 @@
 
 **AI 기반 회사 분석 및 커리어 상담 플랫폼**
 
-BlindInsight AI는 익명 직장 리뷰 데이터를 분석하여 데이터 기반의 커리어 인사이트를 제공하는 AI 플랫폼입니다.
+BlindInsight AI는 블라인드(Blind.com) 리뷰 데이터를 수집하고 AI로 분석하여, 개인화된 회사 분석과 커리어 상담을 제공하는 종합 플랫폼입니다.
 
-## 🎯 주요 기능
+![BlindInsight AI Architecture](https://img.shields.io/badge/AI-LangGraph%20%2B%20RAG-blue?style=for-the-badge)
+![Python](https://img.shields.io/badge/Python-3.10+-green?style=for-the-badge)
+![Streamlit](https://img.shields.io/badge/Streamlit-UI-red?style=for-the-badge)
 
-### 🏢 회사 분석
-- **문화 분석**: 실제 직장인들의 솔직한 회사 문화 리뷰 분석
-- **연봉 정보**: 포지션별, 경력별 실제 연봉 데이터 제공
-- **성장 기회**: 회사의 안정성과 성장 가능성 분석
-- **면접 정보**: 실제 면접 후기와 준비 팁 제공
+## 🌟 핵심 기능
 
-### 💼 개인화된 커리어 상담
-- **맞춤형 추천**: 개인 프로필 기반 최적 회사 추천
-- **스킬 갭 분석**: 목표 포지션을 위한 필요 역량 분석
-- **커리어 로드맵**: 단계별 경력 발전 전략 제시
-- **시장 동향 분석**: 업계 트렌드와 기회 분석
+### 🤖 AI 회사 분석
+- **다중 에이전트 병렬 분석**: 기업문화, 연봉/복지, 경영진, 커리어, 워라벨을 독립적으로 분석
+- **실시간 데이터 통합**: 최신 리뷰 데이터 활용
+- **컨텍스트 기반 답변**: RAG (Retrieval Augmented Generation) 기술로 정확한 정보 제공
 
-### 🔧 핵심 기술 스택
-- **LangGraph**: 멀티 에이전트 워크플로우 오케스트레이션
-- **RAG (Retrieval-Augmented Generation)**: ChromaDB 기반 지식 검색
-- **MCP (Model Context Protocol)**: 외부 데이터 소스 통합
-- **Streamlit**: 인터랙티브 웹 인터페이스
-- **OpenAI GPT**: 자연어 처리 및 분석
+### 🔍 AI 검색 (Supervisor Chat)
+- **자연어 질의**: 복잡한 회사 관련 질문을 자연어로 처리
+- **다차원 검색**: 문화, 급여, 성장성, 커리어 등 모든 영역 통합 검색
+- **실시간 응답**: 벡터 DB 기반 빠른 검색과 AI 추론
+
+
+
+## 🏗️ 시스템 아키텍처
+
+### 전체 데이터 플로우
+```
+📥 데이터 수집        📊 데이터 처리         🤖 AI 분석          💻 웹 인터페이스
+─────────────      ─────────────      ─────────────      ─────────────
+Blind Crawler  →   Vector Migration  →   AI Agents    →   Streamlit UI
+(tools/)           (migrate_reviews)     (LangGraph)       (frontend/)
+```
+
+### 상세 아키텍처
+```
+🌐 Streamlit Web Interface (main.py → frontend/app.py)
+├── 🏠 홈페이지 & 대시보드
+├── 🔍 AI 회사 분석 페이지
+└── 💬 AI 검색 (Supervisor Chat)
+
+🧠 AI Analysis Engine (LangGraph Multi-Agent)
+├── 🏛️ 기업문화 분석 에이전트
+├── 💰 급여 및 복지 분석 에이전트
+├── 📈 경영진 분석 에이전트
+└── 🎯 커리어 분석 에이전트
+└── 🎯 워라벨 분석 에이전트
+
+💾 Data Processing Pipeline
+├── 🕷️ 크롤링 (tools/blind_review_crawler.py)
+├── 🔄 벡터 변환 (migrate_reviews.py)
+└── 📚 지식 베이스 (ChromaDB)
+
+🔗 Integration Layer
+├── 🤝 MCP (Model Context Protocol)
+├── 📡 RAG (Retrieval Augmented Generation)
+└── 🔍 Vector Search Engine
+```
 
 ## 🚀 빠른 시작
 
-### 1. 요구사항
-- Python 3.9 이상
-- [uv](https://docs.astral.sh/uv/) (Python 패키지 매니저)
+### 1. 환경 설정
+
+#### 필수 요구사항
+- Python 3.10 이상
 - OpenAI API 키
+- Chrome 브라우저 (데이터 수집용)
 
-### 2. 설치
-
-```bash
-# 저장소 클론
-git clone https://github.com/wonjunchoi-arc/blind.git
-cd blind
-
-# uv 설치 (아직 설치하지 않았다면)
-# Windows (PowerShell)
-irm https://astral.sh/uv/install.ps1 | iex
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# uv로 가상환경 생성 및 의존성 설치
-uv venv blindinsight-env
-uv pip install -r requirements.txt
-```
-
-### 3. 가상환경 활성화
-
+#### 가상환경 생성 및 활성화
 ```bash
 # Windows (PowerShell)
+python -m venv blindinsight-env
 .\blindinsight-env\Scripts\Activate.ps1
 
 # Windows (Command Prompt)
 blindinsight-env\Scripts\activate.bat
 
 # macOS/Linux
+python -m venv blindinsight-env
 source blindinsight-env/bin/activate
 ```
 
-### 4. 환경 설정
-
+#### 의존성 설치
 ```bash
-# .env.example을 .env로 복사
-cp .env.example .env
+# 권장: uv 사용 (빠른 설치)
+pip install uv
+uv pip install -r requirements.txt
 
-# .env 파일을 열고 실제 API 키를 입력하세요
-# OPENAI_API_KEY="your_openai_api_key_here"
+# 또는 기본 pip 사용
+pip install -r requirements.txt
 ```
 
-⚠️ **보안 주의사항**: 
-- `.env` 파일은 절대로 Git에 커밋하지 마세요
-- API 키는 안전하게 보관하고 공유하지 마세요
-
-### 5. 실행
-
-```bash
-# 메인 애플리케이션 실행
-python main.py
-
-# 또는 Streamlit으로 직접 실행
-streamlit run main.py
-```
-
-브라우저에서 `http://localhost:8501`로 접속하세요.
-
-## 📁 프로젝트 구조
-
-```
-blind/
-├── src/blindinsight/           # 메인 패키지
-│   ├── models/                 # 데이터 모델
-│   │   ├── base.py            # 기본 설정 및 모델
-│   │   ├── analysis.py        # 분석 요청/응답 모델
-│   │   ├── user.py            # 사용자 프로필 모델
-│   │   └── company.py         # 회사 데이터 모델
-│   ├── workflow/              # LangGraph 워크플로우
-│   │   ├── state.py           # 워크플로우 상태 관리
-│   │   ├── nodes.py           # 개별 처리 노드들
-│   │   └── graph.py           # 워크플로우 오케스트레이션
-│   ├── agents/                # AI 에이전트들
-│   │   ├── base.py            # 기본 에이전트 클래스
-│   │   ├── culture_agent.py   # 문화 분석 에이전트
-│   │   ├── compensation_agent.py  # 연봉 분석 에이전트
-│   │   ├── growth_agent.py    # 성장성 분석 에이전트
-│   │   └── career_agent.py    # 커리어 분석 에이전트
-│   ├── rag/                   # RAG 시스템
-│   │   ├── embeddings.py      # 임베딩 및 벡터 저장소
-│   │   ├── document_processor.py  # 문서 처리 및 청킹
-│   │   ├── retriever.py       # 검색 및 재랭킹
-│   │   └── knowledge_base.py  # 통합 지식 베이스
-│   ├── mcp/                   # MCP 통합 레이어
-│   │   ├── client.py          # MCP 클라이언트
-│   │   ├── providers.py       # 데이터 제공자들
-│   │   └── handlers.py        # 데이터 처리 핸들러
-│   └── frontend/              # Streamlit 프론트엔드
-│       ├── app.py             # 메인 애플리케이션
-│       ├── components.py      # UI 구성 요소
-│       └── utils.py           # 유틸리티 함수
-├── data/                      # 데이터 디렉토리
-├── logs/                      # 로그 파일
-├── requirements.txt           # Python 의존성
-├── pyproject.toml            # 패키지 설정
-├── main.py                   # 메인 실행 파일
-└── README.md                 # 이 파일
-```
-
-## 🔧 설정 및 구성
-
-### 환경 변수
-
+### 2. 환경변수 설정
+`.env` 파일을 프로젝트 루트에 생성:
 ```bash
 # 필수 설정
-OPENAI_API_KEY=your_openai_api_key
+OPENAI_API_KEY=your_openai_api_key_here
 
-# 선택 설정
-EMBEDDING_DIMENSIONS=3072       # 임베딩 차원 수
-VECTOR_DB_PATH=./data/vector_db # 벡터 DB 경로
-LOG_LEVEL=INFO                  # 로그 레벨
+# 선택적 설정 (고급 기능용)
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+LANGSMITH_API_KEY=your_langsmith_api_key_here
+LANGSMITH_TRACING=true
+
+# 데이터베이스 경로 (기본값 사용 권장)
+VECTOR_DB_PATH=./data/vector_db
+JSON_DATA_PATH=./tools/data
+
+# AI 처리 설정
+AI_BATCH_SIZE=30
+EMBEDDING_MODEL=text-embedding-3-large
 ```
 
-### 데이터 소스 설정
+### 3. 애플리케이션 실행
+```bash
+# 메인 애플리케이션 시작
+python main.py
 
-`src/blindinsight/models/base.py`에서 설정을 변경할 수 있습니다:
+# 또는 직접 Streamlit 실행
+streamlit run main.py
 
+# 브라우저에서 http://localhost:8501 접속
+```
+
+## 📚 상세 사용 가이드
+
+### 🕷️ 1단계: 데이터 수집 (선택사항)
+
+새로운 회사 데이터가 필요한 경우에만 수행:
+
+```bash
+# 대화형 크롤링 (권장)
+python tools/blind_review_crawler.py
+
+# 단일 회사 크롤링
+python -c "
+from tools.blind_review_crawler import run_single_company_crawl
+run_single_company_crawl('NAVER', pages=25, use_ai_classification=True)
+"
+```
+
+**크롤링 옵션**:
+- **AI 분류**: 정확하지만 OpenAI API 비용 발생
+- **키워드 분류**: 무료이지만 정확도 낮음
+- **배치 처리**: API 비용 90% 절약하는 최적화 기능
+
+### 🔄 2단계: 데이터 벡터화 및 마이그레이션
+
+수집된 리뷰 데이터를 AI 검색이 가능한 형태로 변환:
+
+```bash
+# 전체 데이터 마이그레이션
+python migrate_reviews.py
+
+# 특정 회사만 처리
+python migrate_reviews.py NAVER
+
+# 도움말 확인
+python migrate_reviews.py --help
+```
+
+**마이그레이션 과정**:
+1. JSON 파일에서 청크 데이터 로드
+2. OpenAI 임베딩 모델로 벡터 생성 (배치 처리로 최적화)
+3. ChromaDB에 카테고리별 컬렉션으로 저장
+4. 데이터 무결성 검증 및 성능 보고서 생성
+
+### 🌐 2단계: 웹 애플리케이션 사용
+
+
+#### AI 회사 분석 페이지
+```
+🏢 회사 선택 → 📋 분석 설정 → 🤖 AI 분석 → 📊 결과 확인
+```
+
+**분석 탭 구성**:
+- **커뮤니티**: 실제 직원 후기 및 평점
+- **기본 정보**: 회사 개요 및 기본 데이터
+- **AI 분석**: 5개 에이전트 병렬 분석 결과
+
+#### AI 검색 (Supervisor Chat)
+```
+💬 자연어 질문 → 🔍 벡터 검색 → 🧠 AI 추론 → ✨ 정확한 답변
+```
+
+**질문 예시**:
+- "삼성전자에서 워라밸이 좋은 팀은 어디인가요?"
+- "SK하이닉스의 연봉은 얼마인가요"
+
+## 🔧 고급 설정
+
+### 개발 모드 활성화
+`src/blindinsight/models/base.py`에서:
 ```python
 class Settings(BaseSettings):
-    # OpenAI 설정
-    openai_api_key: str
-    embedding_dimensions: int = 3072
-    
-    # 데이터베이스 설정
-    vector_db_path: str = "./data/vector_db"
-    
-    # MCP 설정
-    mcp_enabled: bool = True
+    enable_debug_mode: bool = True  # False에서 True로 변경
 ```
 
-## 🎨 사용 가이드
+### AI 에이전트 설정 커스터마이징
+`src/blindinsight/agents/base.py`에서 기본 설정 수정 가능:
+- 검색 임계값 조정
+- 응답 길이 제한
+- 병렬 처리 여부 설정
 
-### 1. 회사 분석
+### 벡터 DB 컬렉션 관리
+```python
+# 컬렉션 상태 확인
+from blindinsight.rag.knowledge_base import KnowledgeBase
+kb = KnowledgeBase()
+kb.get_collection_stats()
 
-1. **회사 검색**: 메인 페이지에서 분석하고 싶은 회사명 입력
-2. **분석 유형 선택**: 종합 분석, 문화 분석, 연봉 분석 등 선택
-3. **결과 확인**: 다양한 차트와 인사이트로 결과 확인
+# 특정 회사 데이터만 삭제
+kb.delete_company_data("NAVER")
+```
 
-### 2. 커리어 상담
 
-1. **프로필 설정**: 설정 페이지에서 개인 프로필 입력
-2. **AI 채팅**: 커리어 관련 질문을 AI와 대화
-3. **맞춤형 조언**: 개인화된 커리어 조언 받기
-
-### 3. 데이터 탐색
-
-1. **키워드 검색**: 관심 있는 키워드로 검색
-2. **필터 적용**: 회사, 카테고리별 필터링
-3. **상세 정보**: 개별 리뷰와 데이터 상세 확인
-
-## 🧪 개발 및 테스트
-
-### 개발 환경 설정
-
+### 코드 품질 검사
 ```bash
-# 개발용 의존성 설치
-pip install -e ".[dev]"
-
-# 코드 품질 검사
-flake8 src/
+# 코드 포맷팅
 black src/
+
+# 타입 검사
 mypy src/
 
-# 테스트 실행
-pytest tests/
+# 린트 검사
+flake8 src/
 ```
 
-### 데이터 추가
-
-새로운 회사 데이터를 추가하려면:
-
-1. `src/blindinsight/mcp/providers.py`에서 데이터 제공자 수정
-2. MCP 클라이언트를 통해 실제 API 연동
-3. 지식 베이스에 데이터 추가
-
-## 🚀 배포
-
-### Docker를 사용한 배포
-
-```bash
-# Dockerfile 생성 (예시)
-FROM python:3.9-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY . .
-EXPOSE 8501
-
-CMD ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
-```
-
-### 클라우드 배포
-
-- **Streamlit Cloud**: GitHub 연동으로 간편 배포
-- **Heroku**: `requirements.txt`와 `setup.sh` 파일 추가
-- **AWS/GCP**: 컨테이너화 후 클라우드 서비스 배포
+### 개발 워크플로우
+1. **기능 개발**: 새로운 AI 에이전트나 분석 기능 추가
+2. **테스트 작성**: 단위 테스트 및 통합 테스트 작성
+3. **품질 검사**: black, mypy, flake8으로 코드 검증
+4. **수동 테스트**: Streamlit 인터페이스에서 기능 확인
 
 ## 📊 성능 최적화
 
-### 캐싱 전략
-
-- **Streamlit 캐시**: 자주 사용되는 데이터 캐싱
-- **임베딩 캐시**: 임베딩 생성 결과 캐싱
-- **API 응답 캐시**: 외부 API 호출 결과 캐싱
+### 배치 처리 최적화
+- **크롤링**: 대용량 배치 처리로 API 호출 90% 절약
+- **벡터화**: 100개 문서씩 배치 임베딩 생성
+- **저장**: 500개씩 ChromaDB 배치 저장
 
 ### 메모리 관리
+- **스트리밍 처리**: 대용량 파일을 청크 단위로 처리
+- **캐싱**: 자주 사용되는 결과 메모리 캐싱
+- **비동기 처리**: I/O 대기 시간 최소화
 
-- **배치 처리**: 대량 데이터 처리 시 배치 단위로 처리
-- **스트리밍**: 대용량 파일 처리 시 스트리밍 방식 사용
-- **정기 정리**: 불필요한 캐시 및 임시 파일 정리
+### 응답 시간 최적화
+- **병렬 에이전트**: 4개 에이전트 동시 실행
+- **벡터 검색**: 유사도 0.7 이상만 반환
+- **결과 캐싱**: 동일 질문 즉시 응답
+
+## 🗂️ 프로젝트 구조
+
+```
+BlindInsight/
+├── 📁 src/blindinsight/          # 메인 소스 코드
+│   ├── 🤖 agents/                # AI 에이전트 모듈
+│   │   ├── base.py              # 기본 에이전트 클래스
+│   │   ├── culture_agent.py     # 문화 분석 에이전트
+│   │   ├── compensation_agent.py # 급여 분석 에이전트
+│   │   ├── growth_agent.py      # 성장성 분석 에이전트
+│   │   └── career_agent.py      # 커리어 분석 에이전트
+│   │
+│   ├── 💬 chat/                  # 대화형 AI 모듈
+│   │   ├── modern_supervisor.py # Supervisor Chat 엔진
+│   │   ├── state.py            # 대화 상태 관리
+│   │   └── workflow.py         # 대화 워크플로우
+│   │
+│   ├── 🎨 frontend/              # 웹 인터페이스
+│   │   └── app.py              # Streamlit 메인 앱
+│   │
+│   ├── 🔗 mcp/                   # MCP 통합 모듈
+│   │   ├── client.py           # MCP 클라이언트
+│   │   └── providers.py        # 데이터 제공자
+│   │
+│   ├── 📊 models/                # 데이터 모델
+│   │   ├── base.py             # 기본 설정 및 모델
+│   │   ├── analysis.py         # 분석 요청/응답 모델
+│   │   └── user.py             # 사용자 프로필 모델
+│   │
+│   └── 📚 rag/                   # RAG 시스템
+│       ├── knowledge_base.py   # 지식 베이스 관리
+│       └── json_processor.py   # JSON 데이터 처리
+│
+├── 🛠️ tools/                     # 데이터 수집 도구
+│   ├── blind_review_crawler.py # 블라인드 크롤러
+│   ├── enhanced_category_processor.py # 카테고리 처리
+│   ├── keyword_dictionary.py   # 키워드 사전
+│   └── README.md              # 도구 사용법
+│
+├── 🗄️ data/                      # 데이터 디렉토리
+│   ├── vector_db/             # ChromaDB 벡터 데이터베이스
+│   ├── embeddings/            # 임베딩 캐시
+│   └── cache/                 # 기타 캐시 파일
+│
+├── 🧪 tests/                     # 테스트 코드
+│   ├── unit/                  # 단위 테스트
+│   ├── integration/           # 통합 테스트
+│   └── fixtures/              # 테스트 데이터
+│
+├── 📋 main.py                    # 메인 진입점
+├── 🔄 migrate_reviews.py         # 데이터 마이그레이션 스크립트
+├── 📝 requirements.txt           # Python 의존성
+├── ⚙️ .env.example              # 환경변수 예시
+└── 📖 README.md                 # 이 파일
+```
+
+## 🔍 주요 컴포넌트 상세
+
+### 🤖 AI 에이전트 시스템
+**LangGraph 기반 다중 에이전트 아키텍처**
+- **BaseAgent**: 모든 에이전트의 공통 기능 (RAG 검색, MCP 통합, LLM 호출)
+- **병렬 실행**: 4개 에이전트 동시 분석으로 속도 향상
+- **결과 통합**: 각 에이전트 결과를 종합한 최종 리포트 생성
+
+### 📚 RAG (Retrieval Augmented Generation)
+**ChromaDB 기반 벡터 검색 시스템**
+- **임베딩 모델**: OpenAI text-embedding-3-large (3072차원)
+- **컬렉션**: 문화, 급여, 커리어, 인터뷰, 일반 정보별 분리 저장
+- **검색 최적화**: 유사도 임계값 0.7, 최대 20개 문서 반환
+
+
+## 🚨 문제 해결
+
+### 일반적인 오류
+
+#### 애플리케이션 실행 오류
+```bash
+# 환경변수 확인
+python main.py --check-requirements
+
+# 가상환경 확인
+which python  # 또는 where python (Windows)
+
+# 의존성 재설치
+pip install -r requirements.txt --force-reinstall
+```
+
+#### OpenAI API 오류
+- **API 키 확인**: `.env` 파일의 OPENAI_API_KEY 검증
+- **할당량 확인**: OpenAI 계정의 사용량 및 잔액 확인
+- **모델 접근**: text-embedding-3-large 모델 사용 가능 여부 확인
+
+#### ChromaDB 오류
+```bash
+# 벡터 DB 초기화
+rm -rf data/vector_db/
+python migrate_reviews.py
+
+# 권한 문제 (Linux/macOS)
+chmod -R 755 data/
+```
+
+#### 메모리 부족
+- 배치 크기 축소: `AI_BATCH_SIZE=10` (기본값 30)
+- 크롤링 페이지 수 감소: 25페이지 → 10페이지
+- 시스템 메모리 확인 및 다른 애플리케이션 종료
+
+### 로그 파일 위치
+- **애플리케이션 로그**: `blindinsight.log`
+- **크롤링 로그**: `tools/blind_crawler.log`
+- **Streamlit 로그**: 터미널에 실시간 출력
 
 ## 🤝 기여하기
 
-1. Fork 저장소
-2. 기능 브랜치 생성 (`git checkout -b feature/AmazingFeature`)
-3. 변경사항 커밋 (`git commit -m 'Add some AmazingFeature'`)
-4. 브랜치에 Push (`git push origin feature/AmazingFeature`)
-5. Pull Request 생성
+### 개발 환경 설정
+1. Repository fork 및 clone
+2. 개발용 의존성 설치: `pip install -r requirements.txt`
+3. pre-commit 훅 설정: `pre-commit install`
+4. 테스트 실행 확인: `pytest tests/`
+
+### 코드 기여 가이드라인
+- **코드 스타일**: Black (line length: 88)
+- **타입 힌트**: mypy strict 모드 준수
+- **테스트**: 새 기능에 대한 단위 테스트 필수
+- **문서화**: docstring 및 주석으로 코드 의도 명확히
+
+### 새로운 AI 에이전트 추가
+1. `src/blindinsight/agents/` 에 새 에이전트 클래스 생성
+2. `BaseAgent` 상속 및 필수 메서드 구현
+3. `frontend/app.py`에 UI 통합
+4. 테스트 코드 작성
 
 ## 📄 라이센스
 
-이 프로젝트는 MIT 라이센스 하에 배포됩니다. 자세한 내용은 `LICENSE` 파일을 참조하세요.
+이 프로젝트는 개인 연구 및 학습 목적으로 개발되었습니다.
 
-## 📞 지원 및 문의
+**사용 제한사항**:
+- 상업적 이용 금지
+- 개인정보 및 민감 정보 수집 금지
+- 블라인드 서비스 약관 준수 필수
 
-- **이슈 신고**: GitHub Issues 페이지 활용
-- **기능 요청**: GitHub Discussions 또는 Issues
-- **문서 개선**: README 또는 코드 주석 개선 PR
+## 🙏 감사의 말
 
-## 🔮 로드맵
-
-### v1.1 (계획)
-- [ ] 실제 Blind API 연동
-- [ ] 추가 데이터 소스 연동 (원티드, 잡플래닛)
-- [ ] 고급 감정 분석 모델 적용
-- [ ] 실시간 데이터 업데이트
-
-### v1.2 (계획)
-- [ ] 회사 비교 기능 강화
-- [ ] 개인화 추천 알고리즘 개선
-- [ ] 모바일 반응형 UI 개선
-- [ ] 다국어 지원
-
-### v2.0 (장기)
-- [ ] 기업 대상 B2B 서비스
-- [ ] 실시간 채팅 상담
-- [ ] 커리어 트래킹 대시보드
-- [ ] AI 면접 준비 서비스
+- **Blind.com**: 익명 직장 후기 플랫폼 제공
+- **OpenAI**: GPT 및 임베딩 모델 API 제공
+- **LangChain/LangGraph**: AI 에이전트 프레임워크 제공
+- **Streamlit**: 웹 인터페이스 프레임워크 제공
 
 ---
 
-**BlindInsight AI** - 데이터 기반 커리어 의사결정을 위한 AI 플랫폼
+**📧 문의사항이나 제안사항이 있으시면 언제든 연락해주세요!**
 
-Built with ❤️ by the BlindInsight Team
+> ⭐ **도움이 되셨다면 Star를 눌러주세요!**
+>
+> 지속적인 개발과 개선에 큰 힘이 됩니다. 🚀

@@ -57,6 +57,33 @@ logger = logging.getLogger(__name__)
 # 환경변수 로드
 load_dotenv()
 
+# LangSmith 초기화
+try:
+    from langsmith import traceable, Client
+    LANGSMITH_AVAILABLE = True
+    
+    # LangSmith 활성화 상태 체크
+    if os.getenv('LANGSMITH_API_KEY') and os.getenv('LANGSMITH_TRACING', '').lower() == 'true':
+        print("🔍 LangSmith 트레이싱 활성화됨")
+        # 선택적으로 클라이언트 인스턴스 생성 (필요시)
+        langsmith_client = Client()
+    else:
+        print("ℹ️ LangSmith 비활성화 (환경변수 확인: LANGSMITH_API_KEY, LANGSMITH_TRACING)")
+        langsmith_client = None
+        
+except ImportError:
+    LANGSMITH_AVAILABLE = False
+    langsmith_client = None
+    print("ℹ️ LangSmith 미설치 (pip install langsmith로 설치 가능)")
+    
+    # LangSmith가 없을 때 더미 데코레이터
+    def traceable(*args, **kwargs):
+        def decorator(func):
+            return func
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return decorator
+
 class BlindReviewCrawler:
     """개선된 블라인드 리뷰 크롤러 - 배치 처리 최적화"""
     
@@ -427,6 +454,7 @@ class BlindReviewCrawler:
         
         return text
     
+    @traceable(name="company_review_crawling")
     def crawl_company_reviews(self, company_code: str, pages: int = 25):
         """회사 리뷰 크롤링 - 배치 처리 최적화"""
         
@@ -474,6 +502,7 @@ class BlindReviewCrawler:
         # 2단계: 개선된 배치 처리
         return self._process_reviews_with_batch_optimization(company_code, all_reviews)
     
+    @traceable(name="batch_review_processing")
     def _process_reviews_with_batch_optimization(self, company_code: str, all_reviews: List) -> bool:
         """개선된 배치 처리 방식 - 직무/연도 필드 추가"""
         
@@ -573,10 +602,16 @@ class BlindReviewCrawler:
                 print(f"   - 예상 API 호출: {expected_api_calls}회")
                 print(f"   - 절약된 API 호출: {individual_calls_saved}회")
                 
-                # 배치 분류 실행
+                # 배치 분류 실행 (시간 측정 포함)
+                start_time = time.time()
                 classification_results = self.category_processor.text_processor.process_chunks_batch(
                     all_chunk_contents, batch_size=batch_size
                 )
+                processing_time = time.time() - start_time
+                
+                # 성능 로그 (콘솔 출력)
+                print(f"   - 처리 시간: {processing_time:.2f}초")
+                print(f"   - 처리 속도: {len(all_chunk_contents) / processing_time:.1f} 청크/초" if processing_time > 0 else "   - 처리 속도: 즉시")
                 
                 self.results["api_calls_saved"] = individual_calls_saved
                 
@@ -650,6 +685,7 @@ class BlindReviewCrawler:
         
         return final_chunks
     
+    @traceable(name="batch_optimization_summary")
     def _print_batch_optimization_summary(self, company_code: str, file_path: str):
         """배치 최적화 결과 출력"""
         
@@ -699,6 +735,7 @@ class BlindReviewCrawler:
             self.driver.quit()
 
 
+@traceable(name="single_company_crawl")
 def run_single_company_crawl(company_code: str, pages: int = 25, headless: bool = False, 
                             use_ai_classification: bool = True, openai_api_key: str = None, 
                             enable_spell_check: bool = True):
@@ -730,6 +767,7 @@ def run_single_company_crawl(company_code: str, pages: int = 25, headless: bool 
         crawler.close()
 
 
+@traceable(name="multiple_companies_crawl")
 def run_multiple_companies_crawl(company_list: List[str], pages: int = 25, 
                                 headless: bool = False, delay_between_companies: int = 30,
                                 use_ai_classification: bool = True, openai_api_key: str = None, 
