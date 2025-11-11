@@ -2,6 +2,8 @@
 
 블라인드(Blind.com) 리뷰 데이터를 수집하고 AI 기반으로 분석하기 위한 크롤링 및 처리 도구 모음입니다.
 
+**현재 버전**: v3.2 (배치 처리 최적화)
+
 ## 🚀 주요 기능
 
 ### 🔍 블라인드 리뷰 크롤링 (`blind_review_crawler.py`)
@@ -43,7 +45,7 @@ pip install selenium beautifulsoup4 pandas tqdm python-dotenv langsmith openai
 
 ### 1. 단일 기업 크롤링
 ```python
-from blind_review_crawler import run_single_company_crawl
+from tools.blind_review_crawler import run_single_company_crawl
 
 # 기본 사용법 (AI 분류)
 success = run_single_company_crawl(
@@ -51,6 +53,7 @@ success = run_single_company_crawl(
     pages=25,
     headless=False,
     use_ai_classification=True,
+    openai_api_key=None,  # .env에서 자동 로드
     enable_spell_check=True
 )
 
@@ -58,13 +61,14 @@ success = run_single_company_crawl(
 success = run_single_company_crawl(
     company_code="NAVER",
     pages=25,
+    headless=False,
     use_ai_classification=False
 )
 ```
 
 ### 2. 여러 기업 일괄 크롤링
 ```python
-from blind_review_crawler import run_multiple_companies_crawl
+from tools.blind_review_crawler import run_multiple_companies_crawl
 
 company_list = ["NAVER", "카카오", "삼성전자", "LG전자"]
 
@@ -73,11 +77,14 @@ results = run_multiple_companies_crawl(
     pages=25,
     headless=True,
     delay_between_companies=30,
-    use_ai_classification=True
+    use_ai_classification=True,
+    openai_api_key=None,  # .env에서 자동 로드
+    enable_spell_check=True
 )
 
 print(f"성공: {len(results['success'])}개")
 print(f"실패: {len(results['failed'])}개")
+print(f"API 호출 절약: {results['total_api_calls_saved']}회")
 ```
 
 ### 3. 명령행 실행
@@ -115,61 +122,74 @@ python tools/blind_review_crawler.py
 크롤링 완료 후 다음 형태로 파일이 생성됩니다:
 ```
 data/vectordb/
-├── NAVER_reviews_vectordb_2024-01-15.json
-├── 카카오_reviews_vectordb_2024-01-15.json
-└── 삼성전자_reviews_vectordb_2024-01-15.json
+├── 20250915_카카오_ai_batch_vectordb.json
+├── 20250915_네이버_ai_batch_vectordb.json
+├── 20250915_삼성전자_keyword_vectordb.json  (키워드 분류시)
+└── ...
 ```
+
+**파일명 형식**: `{날짜}_{회사명}_{분류방법}_vectordb.json`
+- **날짜**: YYYYMMDD 형식
+- **회사명**: 크롤링한 회사명
+- **분류방법**: `ai_batch` (AI 분류) 또는 `keyword` (키워드 분류)
+
+**출력 경로**: `./data/vectordb` (크롤러 실행 디렉토리 기준)
+- 프로젝트 루트에서 실행시: `data/vectordb/`
+- tools 디렉토리에서 실행시: `tools/data/vectordb/`
 
 ### 출력 데이터 형식
 각 JSON 파일은 다음 구조를 가집니다:
 ```json
 {
-  "company": "NAVER",
-  "created_at": "2024-01-15T10:30:00",
-  "total_reviews": 150,
-  "total_chunks": 450,
-  "categories": {
-    "career_growth": 90,
-    "salary_benefits": 95,
-    "work_life_balance": 85,
-    "company_culture": 100,
-    "management": 80
+  "metadata": {
+    "company": "카카오",
+    "total_chunks": 1010,
+    "ai_classified_chunks": 1010,
+    "keyword_classified_chunks": 0,
+    "created_at": "2025-09-15T14:04:19.793641",
+    "classification_method": "ai_batch",
+    "version": "v3.2_batch_optimized"
   },
   "chunks": [
     {
-      "id": "review_NAVER_0001_pros",
-      "content": "리뷰 내용...",
-      "category": "career_growth",
-      "confidence": 0.85,
+      "id": "work_life_balance_pros_카카오_0000_00",
+      "content": "자율 근무제가 장점이었는데 사라짐 업무량이 많지 않은 편이고...",
       "metadata": {
-        "company": "NAVER",
-        "employee_type": "현직원",
-        "position": "소프트웨어 엔지니어",
-        "year": "2024",
-        "chunk_type": "pros"
+        "company": "카카오",
+        "category": "work_life_balance",
+        "category_kr": "업무와 삶의 균형",
+        "content_type": "pros",
+        "is_positive": true,
+        "source_section": "장점",
+        "priority": "primary",
+        "rating": 4.0,
+        "confidence_score": 0.75,
+        "classification_method": "ai_batch",
+        "employee_status": "현직원",
+        "position": "IT 엔지니어",
+        "year": "2022",
+        "sentence_count": 2,
+        "chunk_index": 0,
+        "content_length": 46
       }
     }
   ]
 }
 ```
 
-## 🔧 고급 설정
-
-### 크롤링 옵션
-- `pages`: 크롤링할 페이지 수 (기본: 25)
-- `headless`: 헤드리스 모드 실행 여부
-- `wait_timeout`: 요소 대기 시간 (초)
-- `output_dir`: 출력 디렉토리 경로
-
-### AI 분류 옵션
-- `use_ai_classification`: AI 분류 사용 여부
-- `enable_spell_check`: 맞춤법 검사 활성화
-- `batch_size`: 배치 처리 크기 (기본: 30)
-
-### 안정성 설정
-- `delay_between_companies`: 기업간 대기 시간 (초)
-- Chrome 옵션 자동 설정으로 안정적 크롤링
-- 에러 복구 및 재시도 로직 내장
+**파일 구조 설명**:
+- **metadata**: 전체 파일 메타정보 (회사명, 총 청크 수, 분류 방법, 버전)
+- **chunks**: 개별 청크 배열
+  - **id**: 청크 고유 식별자 (카테고리_타입_회사_인덱스)
+  - **content**: 실제 리뷰 내용
+  - **metadata**: 청크별 상세 메타데이터
+    - **category**: 카테고리 코드 (work_life_balance, salary_benefits 등)
+    - **category_kr**: 한글 카테고리명
+    - **content_type**: 콘텐츠 타입 (pros, cons, title, improvement)
+    - **is_positive**: 긍정/부정 여부
+    - **confidence_score**: AI 분류 신뢰도 (0.0~1.0)
+    - **classification_method**: 분류 방법 (ai_batch 또는 keyword)
+    - **rating**: 원본 평점 (1.0~5.0)
 
 ## ⚠️ 주의사항
 
@@ -179,15 +199,6 @@ data/vectordb/
 3. 인증번호 입력
 4. 크롤러에서 Enter 키 입력
 
-### 윤리적 사용
-- **적절한 사용**: 개인 연구, 회사 분석, 커리어 결정 지원
-- **금지 사항**: 상업적 악용, 개인정보 수집, 과도한 서버 부하
-- **준수 사항**: robots.txt 확인, 적절한 지연 시간 설정
-
-### 성능 최적화 팁
-- 헤드리스 모드로 실행하여 리소스 절약
-- 배치 크기를 시스템 성능에 맞게 조정
-- 적절한 대기 시간으로 서버 부하 방지
 
 ## 📞 문제 해결
 
@@ -209,8 +220,35 @@ tail -f blind_crawler.log
 
 이 도구로 수집된 데이터는 다음과 같이 활용됩니다:
 
-1. **데이터 수집** (`blind_review_crawler.py`)
-2. **벡터화 및 저장** (`../migrate_reviews.py`)
-3. **AI 분석 활용** (`../src/blindinsight/frontend/app.py`)
+### 1️⃣ 데이터 수집 (이 문서)
+```bash
+python tools/blind_review_crawler.py
+# 출력: tools/data/vectordb/(company)_reviews_vectordb_*.json
+```
 
-전체 프로세스에 대한 자세한 내용은 상위 디렉토리의 README.md를 참고하세요.
+### 2️⃣ 벡터화 및 ChromaDB 저장
+```bash
+python migrate_reviews.py
+# 또는 특정 회사만
+python migrate_reviews.py NAVER
+```
+
+**처리 과정**:
+- JSON 청크 데이터 로드
+- OpenAI 임베딩 생성 (배치 최적화)
+- ChromaDB 컬렉션별 저장 (company_culture, salary_benefits 등)
+- 데이터 무결성 검증 및 성능 리포트 생성
+
+### 3️⃣ AI 분석 활용
+```bash
+python main.py
+# Streamlit UI에서 회사 분석 및 AI 검색 사용
+```
+
+**전체 파이프라인**:
+```
+🕷️ Crawl → 📦 Vectorize → 🤖 Analyze
+(tools/)   (migrate)      (frontend/app.py)
+```
+
+전체 프로세스에 대한 자세한 내용은 [프로젝트 루트 README.md](../README.md)를 참고하세요.

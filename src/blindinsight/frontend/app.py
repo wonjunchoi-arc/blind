@@ -128,12 +128,12 @@ class BlindInsightApp:
                     try:
                         logger.info(f"지식 베이스 초기화 시도 {attempt + 1}/3")
                         logger.info(f"데이터 디렉토리: {settings.data_directory}")
-                        logger.info(f"벡터DB 경로: C:/blind/data/embeddings")
-                        
-                        # 실제 지식베이스 경로를 명시적으로 설정
+                        logger.info(f"벡터DB 경로: {settings.vector_db_path}")
+
+                        # 실제 지식베이스 경로를 설정에서 가져오기
                         knowledge_base = KnowledgeBase(
                             data_dir=settings.data_directory,
-                            vector_db_path="C:/blind/data/embeddings"
+                            vector_db_path=settings.vector_db_path
                         )
                         
                         # 초기화 완료 후 데이터 확인
@@ -404,18 +404,21 @@ class BlindInsightApp:
             데이터 기반의 커리어 인사이트를 제공하는 AI 플랫폼입니다.
             
             ### 🚀 주요 기능
-            
-            #### 🏢 회사 분석
-            - **문화 분석**: 실제 직장인들의 솔직한 회사 문화 리뷰 분석
-            - **연봉 정보**: 포지션별, 경력별 실제 연봉 데이터 제공
-            - **성장 기회**: 회사의 안정성과 성장 가능성 분석
-            - **면접 정보**: 실제 면접 후기와 준비 팁 제공
-            
-            #### 💼 개인화된 AI 검색
-            - **맞춤형 추천**: 개인 프로필 기반 최적 회사 추천
-            - **스킬 갭 분석**: 목표 포지션을 위한 필요 역량 분석
-            - **커리어 로드맵**: 단계별 경력 발전 전략 제시
-            - **시장 동향 분석**: 업계 트렌드와 기회 분석
+
+            #### 🏢 AI 회사 분석
+            AI가 5개 분야별로 실제 현직자들의 리뷰를 종합 분석하여 제공합니다:
+            - **기업문화**: 조직 분위기, 업무 환경, 동료 관계 분석
+            - **연봉과 복지**: 실제 연봉 데이터와 복지 혜택 정보
+            - **워라벨**: 근무 시간, 휴가 사용, 업무 강도 분석
+            - **경영진**: 리더십, 의사결정, 회사 방향성 평가
+            - **커리어**: 성장 기회, 승진 체계, 개발 지원 분석
+
+            #### 💼 AI 검색
+            원하는 정보를 검색하면 현직자들의 실제 리뷰와 커뮤니티 글을 바탕으로:
+            - **실시간 정보 수집**: 블라인드, 잡플래닛 등 현직자 리뷰 데이터
+            - **AI 분석 및 정리**: 수많은 리뷰를 AI가 종합하여 핵심 인사이트 도출
+            - **맞춤형 답변**: 사용자 질문에 최적화된 정보 제공
+            - **신뢰성 검증**: 다수 현직자 의견을 종합한 객관적 분석
             """)
         
         with col2:
@@ -567,16 +570,16 @@ class BlindInsightApp:
         # 샘플 커뮤니티 데이터
         community_posts = [
             {
-                "title": f"{company_name} 울산 보건관리자 채용 문의",
-                "content": "현직들 울산공장 보건관리자 경력계약직 채용있었는데 육휴대체 자리일까요? 처우는 어떨까요?",
+                "title": f"{company_name}  채용 문의",
+                "content": "현직들 경력계약직 채용있었는데 육휴대체 자리일까요? 처우는 어떨까요?",
                 "likes": 3,
                 "comments": 1,
                 "views": 56,
                 "time": "3일전"
             },
             {
-                "title": f"{company_name} 부산",
-                "content": "안녕하세요 금호석유화학 부산 ts 포지션 지원받았습니다 대략 연봉 및 분위기 알려주시면감사하겠습니다",
+                "title": f"{company_name} 연봉 문의",
+                "content": "안녕하세요 SK텔레콤  신입 초봉알려주시면 감사하겠습니다!!",
                 "likes": 1,
                 "comments": 1,
                 "views": 341,
@@ -607,17 +610,17 @@ class BlindInsightApp:
         
         with col1:
             st.markdown("#### 📊 기본 정보")
-            st.write("**업종**: 화학")
-            st.write("**설립연도**: 1976년")
-            st.write("**직원수**: 약 3,000명")
+            st.write("**업종**: 무선 및 위성 통신업")
+            st.write("**설립연도**: 1984년")
+            st.write("**직원수**: 약 5,626명")
             st.write("**본사위치**: 서울특별시")
             
         with col2:
             st.markdown("#### ⭐ 평점 현황")
-            st.metric("전체 평점", "3.2/5.0")
-            st.metric("급여 만족도", "3.1/5.0")
+            st.metric("전체 평점", "3.8/5.0")
+            st.metric("급여 만족도", "4.2/5.0")
             st.metric("복지 만족도", "3.0/5.0")
-            st.metric("워라밸", "3.5/5.0")
+            st.metric("워라밸", "4.2/5.0")
         
         # 최근 리뷰
         st.markdown("#### 📝 최근 리뷰")

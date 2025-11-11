@@ -42,36 +42,37 @@ Control via `WorkflowConfig.enable_parallel_execution` in src/blindinsight/workf
 #### Agent Hierarchy
 All agents inherit from `BaseAgent` (src/blindinsight/agents/base.py) which provides:
 - RAG knowledge retrieval via `retrieve_knowledge()`
-- MCP service integration via `call_mcp_service()`
 - LLM response generation via `generate_response()`
 - Result validation and performance tracking
+- Configurable search parameters (k, threshold, reranking)
 
-Specialized agents:
-- `CultureAnalysisAgent`: Company culture and work-life balance analysis
-- `CompensationAnalysisAgent`: Salary and benefits analysis  
-- `GrowthStabilityAgent`: Growth potential and financial stability
-- `CareerPathAgent`: Personalized career path recommendations
+Specialized agents (src/blindinsight/agents/):
+- `SalaryBenefitsAgent`: Salary and benefits analysis (salary_benefits_agent.py)
+- `CompanyCultureAgent`: Company culture analysis (company_culture_agent.py)
+- `WorkLifeBalanceAgent`: Work-life balance analysis (work_life_balance_agent.py)
+- `ManagementAgent`: Management and leadership analysis (management_agent.py)
+- `CareerGrowthAgent`: Career growth opportunities (career_growth_agent.py)
+- `QualityEvaluatorAgent`: Analysis quality evaluation (quality_evaluator_agent.py)
 
 ### Data Architecture
 
 #### RAG System (src/blindinsight/rag/)
-- **Vector Database**: ChromaDB with collections: culture_reviews, salary_discussions, career_advice, interview_reviews, company_general
-- **Embeddings**: OpenAI text-embedding-3-large (3072 dimensions)
-- **Retrieval**: Configurable similarity threshold (default: 0.7), max 20 documents per query
+- **Vector Database**: ChromaDB with collections: company_culture, work_life_balance, management, salary_benefits, career_growth, general
+- **Embeddings**: OpenAI text-embedding-3-small (default, configurable via EMBEDDING_MODEL env var)
+- **Hybrid Retrieval**: BM25 + Vector search ensemble with configurable weights
+- **Reranking**: Optional reranking for improved relevance (controlled by rerank parameter)
+- **Batch Processing**: BatchEmbeddingManager for optimized embedding generation
 
-#### MCP Integration (src/blindinsight/mcp/)
-External data source providers:
-- `BlindDataProvider`: Blind.com review data
-- `JobSiteProvider`: Job posting information
-- `SalaryDataProvider`: Compensation benchmarks
-- `CompanyNewsProvider`: News and trend analysis
+#### Supervisor Chat System (src/blindinsight/chat/)
+- **ModernSupervisorAgent**: LangGraph-based multi-agent orchestration
+- **SupervisorState**: Conversation state management with message history
+- **Command Handoffs**: Tool-based agent delegation system
+- **Specialized Agents**: 5 domain experts + quality evaluator coordinated by supervisor
+- **Workflow**: LangGraph StateGraph with conditional routing and human-in-the-loop support
 
 #### State Management
-`WorkflowState` (src/blindinsight/workflow/state.py) maintains:
-- Analysis request and user profile
-- Progress tracking and error handling
-- Agent execution results
-- Performance metrics and timing
+- **SupervisorState** (src/blindinsight/chat/state.py): Manages conversation flow, message history, and agent handoffs
+- **Configuration**: Model selection, search parameters, and agent routing via environment variables
 
 ### Configuration System
 Settings managed through `Settings` dataclass (src/blindinsight/models/base.py):
@@ -82,12 +83,13 @@ Settings managed through `Settings` dataclass (src/blindinsight/models/base.py):
 
 ## Key Implementation Patterns
 
-### Workflow Customization
-To add new analysis types:
-1. Create new agent class inheriting from `BaseAgent`
-2. Add node wrapper in `BlindInsightWorkflow._build_workflow()`
-3. Update edge definitions in `_define_workflow_edges()`
-4. Register in agent factory functions
+### Adding New Agents
+To add new specialized agents:
+1. Create new agent class inheriting from `BaseAgent` in src/blindinsight/agents/
+2. Implement agent-specific prompt and category mapping
+3. Register in `SupervisorState` and handoff tools (src/blindinsight/chat/workflow.py)
+4. Add corresponding environment variable for model selection (optional)
+5. Update ChromaDB collection mappings if using new categories
 
 ### Error Handling & Performance
 - All agents use `_execute_with_error_handling()` wrapper
@@ -107,10 +109,55 @@ To add new analysis types:
 - All dependencies pinned in requirements.txt
 - Development tools: black, mypy, pytest configured in pyproject.toml
 
+## Data Collection & Processing
+
+### Crawling Blind Reviews
+For detailed crawling documentation, see [tools/README.md](tools/README.md)
+
+**Quick Start**:
+```bash
+# Interactive crawling
+python tools/blind_review_crawler.py
+
+# Single company (AI classification)
+python -c "
+from tools.blind_review_crawler import run_single_company_crawl
+run_single_company_crawl('NAVER', pages=25, use_ai_classification=True)
+"
+```
+
+**Key Features**: AI classification, keyword fallback, 90% API cost savings via batch processing
+
+### Data Vectorization & Migration
+```bash
+# Full data migration
+python migrate_reviews.py
+
+# Specific company only
+python migrate_reviews.py NAVER
+
+# Help
+python migrate_reviews.py --help
+```
+
+**Migration Pipeline**:
+1. Load chunk data from JSON files
+2. Generate embeddings using OpenAI model (batch optimized)
+3. Store in ChromaDB by category collections
+4. Validate data integrity and generate performance report
+
+**Key Files**:
+- **Crawler**: tools/blind_review_crawler.py (Selenium-based)
+- **Category Processor**: tools/enhanced_category_processor.py (AI classification)
+- **Migration**: migrate_reviews.py (batch embedding generation)
+- **RAG Retriever**: src/blindinsight/rag/retriever.py (hybrid search)
+
 ## Critical File Locations
 - **Main entry**: main.py → src/blindinsight/frontend/app.py
-- **Workflow orchestration**: src/blindinsight/workflow/graph.py
+- **Supervisor Chat**: src/blindinsight/chat/modern_supervisor.py (multi-agent orchestration)
 - **Agent base classes**: src/blindinsight/agents/base.py
 - **Configuration**: src/blindinsight/models/base.py
-- **State management**: src/blindinsight/workflow/state.py
+- **State management**: src/blindinsight/chat/state.py (SupervisorState)
 - **Frontend interface**: src/blindinsight/frontend/app.py
+- **Data crawler**: tools/blind_review_crawler.py
+- **Data migration**: migrate_reviews.py

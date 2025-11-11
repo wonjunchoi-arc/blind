@@ -126,9 +126,18 @@ class ManagementAgent(BaseAgent):
                 # print(f"[management_agent] 장점 분석 응답: {str(strengths_response)[:200]}...")
 
                 import json
+                import re
                 if strengths_response and strengths_response.strip():
                     try:
-                        strengths = json.loads(strengths_response.strip())
+                        # 마크다운 코드 블록이 있는지 확인
+                        if '```' in strengths_response:
+                            # 마크다운 코드 블록 제거
+                            cleaned = re.sub(r'^```(?:json)?\s*\n?', '', strengths_response.strip(), flags=re.MULTILINE)
+                            cleaned = re.sub(r'\n?```\s*$', '', cleaned, flags=re.MULTILINE)
+                            strengths = json.loads(cleaned.strip())
+                        else:
+                            # 일반 JSON 파싱
+                            strengths = json.loads(strengths_response.strip())
                     except json.JSONDecodeError as je:
                         print(f"JSON 파싱 실패, 대체 파싱 시도: {str(je)}")
                         if isinstance(strengths_response, str):
@@ -161,7 +170,7 @@ class ManagementAgent(BaseAgent):
             JSON 객체 형태로만 출력하세요.  
 
             {{
-            "strengths": [
+            "weaknesses": [
                 "구체적인 단점 1",
                 "구체적인 단점 2",
                 "구체적인 단점 3",
@@ -183,7 +192,15 @@ class ManagementAgent(BaseAgent):
                 import json
                 if weaknesses_response and weaknesses_response.strip():
                     try:
-                        weaknesses = json.loads(weaknesses_response.strip())
+                        # 마크다운 코드 블록이 있는지 확인
+                        if '```' in weaknesses_response:
+                            # 마크다운 코드 블록 제거
+                            cleaned = re.sub(r'^```(?:json)?\s*\n?', '', weaknesses_response.strip(), flags=re.MULTILINE)
+                            cleaned = re.sub(r'\n?```\s*$', '', cleaned, flags=re.MULTILINE)
+                            weaknesses = json.loads(cleaned.strip())
+                        else:
+                            # 일반 JSON 파싱
+                            weaknesses = json.loads(weaknesses_response.strip())
                     except json.JSONDecodeError as je:
                         print(f"JSON 파싱 실패, 대체 파싱 시도: {str(je)}")
                         if isinstance(weaknesses_response, str):

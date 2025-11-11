@@ -140,16 +140,16 @@ class CareerGrowthAgent(BaseAgent):
         strengths = []
         if positive_documents:
             strengths_prompt = f"""
-            다음은 직장인으로써의 커리어와 관련된 장점과 관련된 실제 긍정적 리뷰 데이터입니다.  
-            이 데이터를 바탕으로 {company_name}의 커리어 향상 **장점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.  
+            다음은 직장인으로써의 **커리어 발전 및 성장**와 관련된 장점과 관련된 실제 긍정적 리뷰 데이터입니다.  
+            이 데이터를 바탕으로 {company_name}의 **커리어 발전 및 성장**  **장점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.  
 
             **중요 조건:**  
             - 입력된 context_text에는 다양한 문서가 포함될 수 있습니다.  
-            - 반드시 **직장인으로써의 커리어와 관련 내용이 담긴 문서들만** 선별하여 요약 및 정리하세요.  
-            - 직장인으로써의 커리어와 직접 관련 없는 문서는 무시하고, 나열하거나 요약하지 마세요.  
+            - 반드시 **직장인으로써의 커리어 발전 및 성장와 관련 내용이 담긴 문서들만** 선별하여 요약 및 정리하세요.  
+            - 직장인으로써의 커리어 발전 및 성장와 직접 관련 없는 문서는 무시하고, 나열하거나 요약하지 마세요.  
             - 반복적으로 언급되거나 리뷰에서 많이 나타나는 장점 위주로만 추려주세요.  
 
-            목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 직장인으로써의 커리어와 관련 결정을 내리는 데 도움을 주는 것입니다.
+            목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 직장인으로써의 커리어 발전 및 성장와 관련 결정을 내리는 데 도움을 주는 것입니다.
 
             **출력 형식:**  
             JSON 객체 형태로만 출력하세요.  
@@ -162,7 +162,7 @@ class CareerGrowthAgent(BaseAgent):
                 ...
                 "구체적인 장점 N"
             ],
-            "final_summary": "위 장점들을 종합했을 때 {company_name}의 직장인으로써의 커리어와 관련된 전반적인 강점 요약"
+            "final_summary": "위 장점들을 종합했을 때 {company_name}의 직장인으로써의 커리어 발전 및 성장와 관련된 전반적인 강점 요약"
             }}
             """
             try:
@@ -175,9 +175,19 @@ class CareerGrowthAgent(BaseAgent):
                 # print(f"[career_growth_agent] 장점 분석 응답: {strengths_response[:200]}...")
                 
                 import json
+                import re
+
                 if strengths_response and strengths_response.strip():
                     try:
-                        strengths = json.loads(strengths_response.strip())
+                        # 마크다운 코드 블록이 있는지 확인
+                        if '```' in strengths_response:
+                            # 마크다운 코드 블록 제거
+                            cleaned = re.sub(r'^```(?:json)?\s*\n?', '', strengths_response.strip(), flags=re.MULTILINE)
+                            cleaned = re.sub(r'\n?```\s*$', '', cleaned, flags=re.MULTILINE)
+                            strengths = json.loads(cleaned.strip())
+                        else:
+                            # 일반 JSON 파싱
+                            strengths = json.loads(strengths_response.strip())
                     except json.JSONDecodeError as je:
                         print(f"JSON 파싱 실패, 대체 파싱 시도: {str(je)}")
                         if isinstance(strengths_response, str):
@@ -195,30 +205,30 @@ class CareerGrowthAgent(BaseAgent):
         weaknesses = []
         if negative_documents:
             weaknesses_prompt = f"""
-            다음은 직장인으로써의 커리어와 관련된 단점과 관련된 실제 긍정적 리뷰 데이터입니다.  
-            이 데이터를 바탕으로 {company_name}의 커리어와 관련된 **단점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.  
+            다음은 직장인으로써의 커리어 발전 및 성장와 관련된 단점과 관련된 실제 긍정적 리뷰 데이터입니다.  
+            이 데이터를 바탕으로 {company_name}의 커리어 발전 및 성장와 관련된 **단점**을 5개 정도로 구체적이고 핵심적으로 정리 및 요약해주세요.  
 
             **중요 조건:**  
             - 입력된 context_text에는 다양한 문서가 포함될 수 있습니다.
             - 반드시 context_text에 포함된 문서들만 참고하세요.
-            - 반드시 **직장인으로써의 커리어와 관련 내용이 담긴 문서들만** 선별하여 요약 및 정리하세요.  
-            - 직장인으로써의 커리어와 직접 관련 없는 문서는 무시하고, 나열하거나 요약하지 마세요.  
+            - 반드시 **직장인으로써의 커리어 발전 및 성장와 관련 내용이 담긴 문서들만** 선별하여 요약 및 정리하세요.  
+            - 직장인으로써의 커리어 발전 및 성장와 직접 관련 없는 문서는 무시하고, 나열하거나 요약하지 마세요.  
             - 반복적으로 언급되거나 리뷰에서 많이 나타나는 단점 위주로만 추려주세요.  
 
-            목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 직장인으로써의 커리어와 관련 결정을 내리는 데 도움을 주는 것입니다.
+            목적은 사용자들이 회사에 대한 정확한 정보를 얻고, 직장인으로써의 커리어 발전 및 성장와 관련 결정을 내리는 데 도움을 주는 것입니다.
 
             **출력 형식:**  
             JSON 객체 형태로만 출력하세요.  
 
             {{
-            "strengths": [
+            "weaknesses": [
                 "구체적인 단점 1",
                 "구체적인 단점 2",
                 "구체적인 단점 3",
                 ...
                 "구체적인 단점 N"
             ],
-            "final_summary": "위 단점들을 종합했을 때 {company_name}의 직장인으로써의 커리어와 관련된 전반적인 단점 요약"
+            "final_summary": "위 단점들을 종합했을 때 {company_name}의 직장인으로써의 커리어 발전 및 성장와 관련된 전반적인 단점 요약"
             }}
             """
             try:
@@ -233,7 +243,15 @@ class CareerGrowthAgent(BaseAgent):
                 import json
                 if weaknesses_response and weaknesses_response.strip():
                     try:
-                        weaknesses = json.loads(weaknesses_response.strip())
+                        # 마크다운 코드 블록이 있는지 확인
+                        if '```' in weaknesses_response:
+                            # 마크다운 코드 블록 제거
+                            cleaned = re.sub(r'^```(?:json)?\s*\n?', '', weaknesses_response.strip(), flags=re.MULTILINE)
+                            cleaned = re.sub(r'\n?```\s*$', '', cleaned, flags=re.MULTILINE)
+                            weaknesses = json.loads(cleaned.strip())
+                        else:
+                            # 일반 JSON 파싱
+                            weaknesses = json.loads(weaknesses_response.strip())
                     except json.JSONDecodeError as je:
                         print(f"JSON 파싱 실패, 대체 파싱 시도: {str(je)}")
                         if isinstance(weaknesses_response, str):

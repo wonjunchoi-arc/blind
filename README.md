@@ -91,23 +91,101 @@ pip install -r requirements.txt
 ```
 
 ### 2. 환경변수 설정
+
+#### ✅ 필수 설정
 `.env` 파일을 프로젝트 루트에 생성:
 ```bash
-# 필수 설정
+# OpenAI API 키 (필수)
 OPENAI_API_KEY=your_openai_api_key_here
+```
 
-# 선택적 설정 (고급 기능용)
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-LANGSMITH_API_KEY=your_langsmith_api_key_here
+#### 🔧 선택적 설정
+
+**AI 모델 설정** - 각 에이전트별 모델 커스터마이징
+```bash
+# 기본 에이전트 모델 (미설정시 gpt-4o-mini 사용)
+# 📍 사용처: src/blindinsight/models/base.py (Settings 클래스)
+DEFAULT_AGENT_MODEL=gpt-4o-mini-2024-07-18
+
+# Supervisor 및 도구 모델
+# 📍 사용처: src/blindinsight/chat/modern_supervisor.py (멀티 에이전트 조율)
+SUPERVISOR_MODEL=gpt-4o-mini-2024-07-18
+AGENT_TOOL_MODEL=gpt-4o-mini-2024-07-18
+
+# 개별 에이전트 모델 (선택) - 에이전트별 다른 모델 사용 가능
+# 📍 사용처: src/blindinsight/agents/*.py (각 전문 에이전트)
+SALARY_BENEFITS_AGENT_MODEL=gpt-4o-mini-2024-07-18      # 급여/복지 분석
+COMPANY_CULTURE_AGENT_MODEL=gpt-4o-mini-2024-07-18      # 기업문화 분석
+WORK_LIFE_BALANCE_AGENT_MODEL=gpt-4o-mini-2024-07-18    # 워라밸 분석
+MANAGEMENT_AGENT_MODEL=gpt-4o-mini-2024-07-18           # 경영진 분석
+CAREER_GROWTH_AGENT_MODEL=gpt-4o-mini-2024-07-18        # 커리어 성장 분석
+QUALITY_EVALUATOR_AGENT_MODEL=gpt-4o-mini-2024-07-18    # 품질 평가
+```
+
+**검색 및 재랭킹 설정** - RAG 성능 튜닝용
+```bash
+# 검색 파라미터
+# 📍 사용처: src/blindinsight/agents/base.py (RAG 검색 시스템)
+DEFAULT_SEARCH_K=10              # 기본 검색 결과 수
+MAX_SEARCH_K=50                  # 최대 검색 결과 수
+RERANK_SEARCH_MULTIPLIER=2       # 재랭킹시 검색 배수
+
+# 앙상블 검색 가중치 (BM25 + 벡터 검색)
+# 📍 사용처: src/blindinsight/rag/retriever.py (하이브리드 검색)
+ENSEMBLE_WEIGHT_BM25=0.3         # 키워드 검색 가중치 (합계 1.0)
+ENSEMBLE_WEIGHT_VECTOR=0.7       # 의미 검색 가중치
+RELEVANCE_SCORE_THRESHOLD=0.3    # 최소 관련성 점수 (0.0~1.0)
+```
+
+**데이터 처리 설정**
+```bash
+# 카테고리별 청크 처리 파라미터
+# 📍 사용처: tools/enhanced_category_processor.py (리뷰 분류 및 청크 생성)
+CATEGORY_CHUNK_SIZE=1            # 카테고리별 청크 크기
+CATEGORY_MAX_CHUNK_SIZE=2        # 최대 청크 크기
+CATEGORY_MIN_SENTENCE_LENGTH=5   # 최소 문장 길이
+
+# 배치 처리 설정
+# 📍 사용처: src/blindinsight/models/base.py (임베딩 생성)
+AI_BATCH_SIZE=30                 # 임베딩 배치 크기 (메모리 부족시 감소)
+MAX_CHUNK_LENGTH=300             # 최대 청크 길이 (토큰 제한용)
+EMBEDDING_MODEL=text-embedding-3-small  # OpenAI 임베딩 모델
+```
+
+**데이터베이스 및 경로 설정**
+```bash
+# 벡터 데이터베이스 경로 (기본값 사용 권장)
+# 📍 사용처: src/blindinsight/models/base.py, migrate_reviews.py
+VECTOR_DB_PATH=./data/embeddings        # ChromaDB 저장 경로
+JSON_DATA_PATH=./data/vectordb          # JSON 청크 데이터 경로
+DATA_DIRECTORY=./data                   # 전체 데이터 루트 디렉토리
+
+# 데이터베이스 URL
+# 📍 사용처: src/blindinsight/models/base.py (SQLite 연결)
+DATABASE_URL=sqlite:///C:/blind/data/blindinsight.db
+```
+
+**디버깅 및 로깅**
+```bash
+# LangSmith 추적 (LangGraph 워크플로우 디버깅용)
+# 📍 사용처: 전역 환경 변수 (LangChain 자동 감지)
+LANGSMITH_API_KEY=your_langsmith_api_key
 LANGSMITH_TRACING=true
 
-# 데이터베이스 경로 (기본값 사용 권장)
-VECTOR_DB_PATH=./data/vector_db
-JSON_DATA_PATH=./tools/data
+# 로깅 레벨
+# 📍 사용처: src/blindinsight/models/base.py (애플리케이션 로그)
+LOG_LEVEL=INFO                   # DEBUG, INFO, WARNING, ERROR
+```
 
-# AI 처리 설정
-AI_BATCH_SIZE=30
-EMBEDDING_MODEL=text-embedding-3-large
+#### 💡 환경 변수 우선순위
+1. `.env` 파일의 명시적 설정
+2. `Settings` 클래스의 기본값
+3. 시스템 환경 변수
+
+#### ⚙️ 환경 변수 검증
+```bash
+# 환경 변수 및 의존성 확인
+python main.py --check-requirements
 ```
 
 ### 3. 애플리케이션 실행
@@ -125,23 +203,14 @@ streamlit run main.py
 
 ### 🕷️ 1단계: 데이터 수집 (선택사항)
 
-새로운 회사 데이터가 필요한 경우에만 수행:
+새로운 회사 데이터가 필요한 경우에만 수행합니다.
+상세한 크롤링 가이드는 **[tools/README.md](tools/README.md)**를 참고하세요.
 
+**Quick Start**:
 ```bash
-# 대화형 크롤링 (권장)
+# 대화형 크롤링
 python tools/blind_review_crawler.py
-
-# 단일 회사 크롤링
-python -c "
-from tools.blind_review_crawler import run_single_company_crawl
-run_single_company_crawl('NAVER', pages=25, use_ai_classification=True)
-"
 ```
-
-**크롤링 옵션**:
-- **AI 분류**: 정확하지만 OpenAI API 비용 발생
-- **키워드 분류**: 무료이지만 정확도 낮음
-- **배치 처리**: API 비용 90% 절약하는 최적화 기능
 
 ### 🔄 2단계: 데이터 벡터화 및 마이그레이션
 
@@ -183,53 +252,8 @@ python migrate_reviews.py --help
 ```
 
 **질문 예시**:
-- "삼성전자에서 워라밸이 좋은 팀은 어디인가요?"
+- "현대차의 기업문화는 어때요?"
 - "SK하이닉스의 연봉은 얼마인가요"
-
-## 🔧 고급 설정
-
-### 개발 모드 활성화
-`src/blindinsight/models/base.py`에서:
-```python
-class Settings(BaseSettings):
-    enable_debug_mode: bool = True  # False에서 True로 변경
-```
-
-### AI 에이전트 설정 커스터마이징
-`src/blindinsight/agents/base.py`에서 기본 설정 수정 가능:
-- 검색 임계값 조정
-- 응답 길이 제한
-- 병렬 처리 여부 설정
-
-### 벡터 DB 컬렉션 관리
-```python
-# 컬렉션 상태 확인
-from blindinsight.rag.knowledge_base import KnowledgeBase
-kb = KnowledgeBase()
-kb.get_collection_stats()
-
-# 특정 회사 데이터만 삭제
-kb.delete_company_data("NAVER")
-```
-
-
-### 코드 품질 검사
-```bash
-# 코드 포맷팅
-black src/
-
-# 타입 검사
-mypy src/
-
-# 린트 검사
-flake8 src/
-```
-
-### 개발 워크플로우
-1. **기능 개발**: 새로운 AI 에이전트나 분석 기능 추가
-2. **테스트 작성**: 단위 테스트 및 통합 테스트 작성
-3. **품질 검사**: black, mypy, flake8으로 코드 검증
-4. **수동 테스트**: Streamlit 인터페이스에서 기능 확인
 
 ## 📊 성능 최적화
 
@@ -238,83 +262,118 @@ flake8 src/
 - **벡터화**: 100개 문서씩 배치 임베딩 생성
 - **저장**: 500개씩 ChromaDB 배치 저장
 
-### 메모리 관리
-- **스트리밍 처리**: 대용량 파일을 청크 단위로 처리
-- **캐싱**: 자주 사용되는 결과 메모리 캐싱
-- **비동기 처리**: I/O 대기 시간 최소화
-
 ### 응답 시간 최적화
 - **병렬 에이전트**: 4개 에이전트 동시 실행
 - **벡터 검색**: 유사도 0.7 이상만 반환
-- **결과 캐싱**: 동일 질문 즉시 응답
 
 ## 🗂️ 프로젝트 구조
 
 ```
 BlindInsight/
 ├── 📁 src/blindinsight/          # 메인 소스 코드
+│   │
 │   ├── 🤖 agents/                # AI 에이전트 모듈
-│   │   ├── base.py              # 기본 에이전트 클래스
-│   │   ├── culture_agent.py     # 문화 분석 에이전트
-│   │   ├── compensation_agent.py # 급여 분석 에이전트
-│   │   ├── growth_agent.py      # 성장성 분석 에이전트
-│   │   └── career_agent.py      # 커리어 분석 에이전트
+│   │   ├── base.py              # 기본 에이전트 클래스 (BaseAgent, AgentConfig)
+│   │   ├── salary_benefits_agent.py      # 급여/복지 분석 에이전트
+│   │   ├── company_culture_agent.py      # 기업문화 분석 에이전트
+│   │   ├── work_life_balance_agent.py    # 워라밸 분석 에이전트
+│   │   ├── management_agent.py           # 경영진 분석 에이전트
+│   │   ├── career_growth_agent.py        # 커리어 성장 분석 에이전트
+│   │   ├── quality_evaluator_agent.py    # 품질 평가 에이전트
+│   │   └── __init__.py          # 에이전트 모듈 초기화
 │   │
-│   ├── 💬 chat/                  # 대화형 AI 모듈
-│   │   ├── modern_supervisor.py # Supervisor Chat 엔진
-│   │   ├── state.py            # 대화 상태 관리
-│   │   └── workflow.py         # 대화 워크플로우
+│   ├── 💬 chat/                  # 대화형 AI 모듈 (Supervisor Chat)
+│   │   ├── modern_supervisor.py # LangGraph 기반 멀티 에이전트 조율자
+│   │   ├── state.py            # SupervisorState 및 대화 상태 관리
+│   │   ├── workflow.py         # Handoff 도구 및 워크플로우 로직
+│   │   └── __init__.py         # Chat 모듈 초기화
 │   │
-│   ├── 🎨 frontend/              # 웹 인터페이스
-│   │   └── app.py              # Streamlit 메인 앱
+│   ├── 🎨 frontend/              # 웹 인터페이스 (Streamlit)
+│   │   ├── app.py              # Streamlit 메인 앱 (홈, AI 분석, AI 검색)
+│   │   ├── components.py       # UI 컴포넌트 (차트, 카드, 테이블)
+│   │   ├── utils.py            # 프론트엔드 유틸리티 함수
+│   │   └── __init__.py         # Frontend 모듈 초기화
 │   │
-│   ├── 🔗 mcp/                   # MCP 통합 모듈
-│   │   ├── client.py           # MCP 클라이언트
-│   │   └── providers.py        # 데이터 제공자
 │   │
-│   ├── 📊 models/                # 데이터 모델
-│   │   ├── base.py             # 기본 설정 및 모델
+│   ├── 📊 models/                # 데이터 모델 및 설정
+│   │   ├── base.py             # Settings 클래스 (환경 변수 관리)
 │   │   ├── analysis.py         # 분석 요청/응답 모델
-│   │   └── user.py             # 사용자 프로필 모델
+│   │   ├── company.py          # 회사 정보 모델
+│   │   ├── user.py             # 사용자 프로필 모델
+│   │   └── __init__.py         # Models 모듈 초기화
 │   │
-│   └── 📚 rag/                   # RAG 시스템
-│       ├── knowledge_base.py   # 지식 베이스 관리
-│       └── json_processor.py   # JSON 데이터 처리
+│   ├── 📚 rag/                   # RAG (Retrieval Augmented Generation) 시스템
+│   │   ├── knowledge_base.py   # KnowledgeBase 클래스 (ChromaDB 관리)
+│   │   ├── json_processor.py   # ChunkDataLoader (JSON → ChromaDB 마이그레이션)
+│   │   ├── retriever.py        # RAGRetriever (하이브리드 검색, 재랭킹)
+│   │   ├── embeddings.py       # BatchEmbeddingManager (배치 임베딩 생성)
+│   │   ├── document_processor.py # 문서 전처리 및 청킹
+│   │   └── __init__.py         # RAG 모듈 초기화
+│   │
+│   └── __init__.py              # BlindInsight 패키지 초기화
 │
-├── 🛠️ tools/                     # 데이터 수집 도구
-│   ├── blind_review_crawler.py # 블라인드 크롤러
-│   ├── enhanced_category_processor.py # 카테고리 처리
-│   ├── keyword_dictionary.py   # 키워드 사전
+├── 🛠️ tools/                     # 데이터 수집 및 전처리 도구
+│   ├── blind_review_crawler.py # 블라인드 리뷰 크롤러 (Selenium 기반)
+│   ├── enhanced_category_processor.py # AI 기반 카테고리 분류기
+│   ├── keyword_dictionary.py   # 카테고리별 키워드 사전
+│   ├── text_processor.py       # 텍스트 전처리 유틸리티
+│   ├── config.py               # 크롤러 설정
+│   ├── data/                   # 크롤링된 JSON 데이터 저장소
+│   │   └── (회사명)_reviews_*.json
 │   └── README.md              # 도구 사용법
 │
 ├── 🗄️ data/                      # 데이터 디렉토리
-│   ├── vector_db/             # ChromaDB 벡터 데이터베이스
-│   ├── embeddings/            # 임베딩 캐시
-│   └── cache/                 # 기타 캐시 파일
+│   ├── embeddings/            # ChromaDB 벡터 데이터베이스
+│   │   ├── company_culture/   # 기업문화 컬렉션
+│   │   ├── work_life_balance/ # 워라밸 컬렉션
+│   │   ├── management/        # 경영진 컬렉션
+│   │   ├── salary_benefits/   # 급여/복지 컬렉션
+│   │   ├── career_growth/     # 커리어 성장 컬렉션
+│   │   └── general/           # 일반 정보 컬렉션
+│   ├── vectordb/              # JSON 청크 데이터 (마이그레이션 전)
+│   └── blindinsight.db        # SQLite 데이터베이스 (선택)
 │
-├── 🧪 tests/                     # 테스트 코드
-│   ├── unit/                  # 단위 테스트
-│   ├── integration/           # 통합 테스트
-│   └── fixtures/              # 테스트 데이터
-│
-├── 📋 main.py                    # 메인 진입점
-├── 🔄 migrate_reviews.py         # 데이터 마이그레이션 스크립트
-├── 📝 requirements.txt           # Python 의존성
-├── ⚙️ .env.example              # 환경변수 예시
-└── 📖 README.md                 # 이 파일
+├── 📋 main.py                    # 애플리케이션 진입점
+├── 🔄 migrate_reviews.py         # 데이터 마이그레이션 스크립트 (배치 최적화)
+├── 📝 requirements.txt           # Python 의존성 목록
+├── ⚙️ .env.example              # 환경변수 템플릿
+├── ⚙️ .env                       # 환경변수 설정 (생성 필요)
+└── 📖 README.md                 # 프로젝트 문서
 ```
+
+### 주요 모듈 설명
+
+#### 🤖 **agents/** - AI 에이전트 시스템
+- **BaseAgent**: 모든 에이전트의 공통 기능 (RAG 검색, MCP 통합, LLM 호출)
+- **전문 에이전트**: 각 분석 영역별 특화된 프롬프트와 로직 제공
+- **병렬 실행**: 5개 에이전트 동시 분석으로 속도 향상
+
+#### 💬 **chat/** - Supervisor Chat 시스템
+- **ModernSupervisorAgent**: LangGraph StateGraph 기반 멀티 에이전트 조율
+- **Command Handoffs**: 도구 호출을 통한 에이전트 간 작업 위임
+- **SupervisorState**: 대화 상태 및 히스토리 관리
+
+#### 📚 **rag/** - RAG 시스템
+- **KnowledgeBase**: ChromaDB 벡터 데이터베이스 관리
+- **RAGRetriever**: BM25 + 벡터 검색 하이브리드 앙상블
+- **BatchEmbeddingManager**: 배치 임베딩 생성으로 API 비용 90% 절감
+
+#### 🛠️ **tools/** - 데이터 수집 도구
+- **blind_review_crawler**: Selenium 기반 블라인드 리뷰 자동 수집
+- **enhanced_category_processor**: GPT 기반 리뷰 카테고리 자동 분류
+- **배치 처리**: 대용량 리뷰 데이터 효율적 처리
 
 ## 🔍 주요 컴포넌트 상세
 
 ### 🤖 AI 에이전트 시스템
 **LangGraph 기반 다중 에이전트 아키텍처**
-- **BaseAgent**: 모든 에이전트의 공통 기능 (RAG 검색, MCP 통합, LLM 호출)
-- **병렬 실행**: 4개 에이전트 동시 분석으로 속도 향상
+- **BaseAgent**: 모든 에이전트의 공통 기능 (RAG 검색, LLM 호출)
+- **병렬 실행**: 5개 에이전트 동시 분석으로 속도 향상
 - **결과 통합**: 각 에이전트 결과를 종합한 최종 리포트 생성
 
 ### 📚 RAG (Retrieval Augmented Generation)
 **ChromaDB 기반 벡터 검색 시스템**
-- **임베딩 모델**: OpenAI text-embedding-3-large (3072차원)
+- **임베딩 모델**: OpenAI text-embedding-3-large
 - **컬렉션**: 문화, 급여, 커리어, 인터뷰, 일반 정보별 분리 저장
 - **검색 최적화**: 유사도 임계값 0.7, 최대 20개 문서 반환
 
@@ -340,15 +399,7 @@ pip install -r requirements.txt --force-reinstall
 - **할당량 확인**: OpenAI 계정의 사용량 및 잔액 확인
 - **모델 접근**: text-embedding-3-large 모델 사용 가능 여부 확인
 
-#### ChromaDB 오류
-```bash
-# 벡터 DB 초기화
-rm -rf data/vector_db/
-python migrate_reviews.py
 
-# 권한 문제 (Linux/macOS)
-chmod -R 755 data/
-```
 
 #### 메모리 부족
 - 배치 크기 축소: `AI_BATCH_SIZE=10` (기본값 30)
@@ -360,25 +411,7 @@ chmod -R 755 data/
 - **크롤링 로그**: `tools/blind_crawler.log`
 - **Streamlit 로그**: 터미널에 실시간 출력
 
-## 🤝 기여하기
 
-### 개발 환경 설정
-1. Repository fork 및 clone
-2. 개발용 의존성 설치: `pip install -r requirements.txt`
-3. pre-commit 훅 설정: `pre-commit install`
-4. 테스트 실행 확인: `pytest tests/`
-
-### 코드 기여 가이드라인
-- **코드 스타일**: Black (line length: 88)
-- **타입 힌트**: mypy strict 모드 준수
-- **테스트**: 새 기능에 대한 단위 테스트 필수
-- **문서화**: docstring 및 주석으로 코드 의도 명확히
-
-### 새로운 AI 에이전트 추가
-1. `src/blindinsight/agents/` 에 새 에이전트 클래스 생성
-2. `BaseAgent` 상속 및 필수 메서드 구현
-3. `frontend/app.py`에 UI 통합
-4. 테스트 코드 작성
 
 ## 📄 라이센스
 
@@ -398,8 +431,3 @@ chmod -R 755 data/
 
 ---
 
-**📧 문의사항이나 제안사항이 있으시면 언제든 연락해주세요!**
-
-> ⭐ **도움이 되셨다면 Star를 눌러주세요!**
->
-> 지속적인 개발과 개선에 큰 힘이 됩니다. 🚀

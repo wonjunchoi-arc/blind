@@ -104,6 +104,14 @@ tmp/
 
 # ☁️ Claude Code 관련
 .claude/
+*.toml
+!pyproject.toml
+!uv.toml
+*.md
+!README.md
+!CLAUDE.md
+!LICENSE.md
+project_documentation.md
 
 # 📦 uv 관련 (Python 패키지 매니저)
 uv.lock
